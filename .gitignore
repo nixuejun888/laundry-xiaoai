@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+*.token
+mi.token
+homeconnect_token.json
+config.json
+homeconnect.json
+bridge.log
+bridge.out
+hc_listen.log
+hc_listen.out
+*.pid
+.sh_history
+.DS_Store

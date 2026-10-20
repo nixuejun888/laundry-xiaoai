@@ -1,0 +1,13 @@
+{
+  "app": "Notifikator",
+  "endpoint_url": "http://127.0.0.1:8765/notify",
+  "method": "POST",
+  "headers": {},
+  "authentication": false,
+  "body_template": "{\"title\":\"%title%\",\"text\":\"%text%\",\"package\":\"%package%\"}",
+  "notes": [
+    "Notifikator 设置页的字段名：Endpoint/URL、Body Template、Headers、Enable Authentication、Testing/Send Notification",
+    "不要用 Send Notification 按钮验证播报：它的测试通知 package 是 org.scottmconway.notifikator、文本不含洗衣关键词，bridge 会故意跳过",
+    "真正验证：锁屏后用另一台设备给手机微信发一条含「洗衣已完成」的消息"
+  ]
+}

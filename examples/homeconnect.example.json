@@ -1,0 +1,20 @@
+{
+  "api_host": "https://api.home-connect.cn",
+  "client_id": "",
+  "client_secret": "",
+  "scope": "IdentifyAppliance Monitor Washer-Monitor Dryer-Monitor",
+  "redirect_uri": "https://api.home-connect.com",
+  "bridge_url": "http://127.0.0.1:8765",
+  "dryer_ignore_program_finished": true,
+  "allow_operation_state_finished": false,
+  "appliance_targets": {},
+  "announce": {
+    "mode": "minimal",
+    "global_min_interval_sec": 20,
+    "per_key_min_interval_sec": 60,
+    "remaining_thresholds_min": [60, 30, 10, 5, 1],
+    "progress_thresholds_pct": [50, 75],
+    "speak_unknown": false,
+    "fill_level_min_interval_sec": 1800
+  }
+}

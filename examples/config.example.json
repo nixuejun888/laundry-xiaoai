@@ -1,0 +1,57 @@
+{
+  "username": "",
+  "password": "",
+  "speaker": "",
+  "volume": null,
+  "tts_channel": "auto",
+  "miot_tts": {},
+  "listen_host": "127.0.0.1",
+  "listen_port": 8765,
+  "cooldown_sec": 300,
+  "cooldown_linger_sec": 1800,
+  "quiet_hours": {
+    "enabled": false,
+    "start": "23:00",
+    "end": "07:30"
+  },
+  "messages": {
+    "washer": "洗衣机洗好了，记得及时晾晒哦",
+    "dryer": "衣服烘干了，记得及时取出哦",
+    "linger": "衣服还在洗衣机里，记得及时取出，防止褶皱和异味",
+    "supply": "洗衣液或柔顺剂不足了，记得补充哦",
+    "generic": "有新的洗衣提醒，请查看手机"
+  },
+  "keywords": {
+    "supply": [
+      "洗衣液不足",
+      "柔顺剂不足",
+      "洗涤剂不足",
+      "补充洗衣液",
+      "请添加洗衣液",
+      "请补充柔顺剂",
+      "耗材不足",
+      "请补充洗涤剂"
+    ],
+    "washer": [
+      "洗衣已完成",
+      "洗涤完成",
+      "洗衣完成",
+      "请及时晾晒",
+      "洗涤结束"
+    ],
+    "dryer": [
+      "烘干已完成",
+      "烘干完成",
+      "烘衣完成",
+      "烘干结束"
+    ],
+    "linger": [
+      "长时间在筒内滞留",
+      "筒内滞留",
+      "桶内滞留"
+    ]
+  },
+  "notify_package_allow": [
+    "com.tencent.mm"
+  ]
+}
