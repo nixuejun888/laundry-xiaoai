@@ -319,6 +319,39 @@ def action_stop():
     run_script(f)
 
 
+def action_hc_reauth():
+    banner("晶御重新授权（方案 B）")
+    hc = find("hc_listen.py")
+    if not hc:
+        print("❌ 找不到 hc_listen.py，先选 9 更新本地工具")
+        return
+    cfg_path = CFG_DIR / "homeconnect.json"
+    try:
+        cfg = json.loads(read_text(cfg_path, "{}"))
+    except Exception:
+        cfg = {}
+    if not cfg.get("client_id"):
+        print("还没配置 client_id，进入配置向导（需要开发者门户的 Client ID）…")
+        c = find("hc_config.py")
+        if not c:
+            print("❌ 找不到 hc_config.py，先选 9 更新本地工具")
+            return
+        run_script(c)
+        return
+    print(f"当前 client_id：{str(cfg['client_id'])[:18]}…")
+    ans = input("确定要重新走一次设备码授权吗？(y/N)：").strip().lower()
+    if ans != "y":
+        print("已取消。")
+        return
+    rc = run_script(hc, ("--login",), timeout=1200)
+    if rc != 0:
+        print("❌ 授权未完成。可重试，或把上面的输出发我。")
+        return
+    print("✅ 授权完成，重启服务让新令牌生效…")
+    ensure_service()
+    print("建议再选 3 做一次完整自检。")
+
+
 def action_update():
     banner("更新本地工具")
     n = update_tools()
@@ -350,9 +383,10 @@ def main():
         print("  7) 看最近日志")
         print("  8) 停止音箱播放")
         print("  9) 更新本地工具到最新")
+        print(" 10) 晶御重新授权（方案 B）")
         print("  0) 退出")
         try:
-            choice = input("输入 1-9 或 0：").strip()
+            choice = input("输入 1-10 或 0：").strip()
         except (EOFError, KeyboardInterrupt):
             print("\n退出。")
             return 0
@@ -375,11 +409,13 @@ def main():
                 action_stop()
             elif choice == "9":
                 action_update()
+            elif choice == "10":
+                action_hc_reauth()
             elif choice == "0":
                 print("再见。")
                 return 0
             else:
-                print("请输入 1-9 或 0。")
+                print("请输入 1-10 或 0。")
         except KeyboardInterrupt:
             print("\n已取消当前操作。")
         except Exception as exc:  # noqa: BLE001
