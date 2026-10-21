@@ -36,6 +36,7 @@ FILES = [
     ("tools/hc_status.py", "tools/hc_status.py"),
     ("tools/hc_announce.py", "tools/hc_announce.py"),
     ("tools/hc_config.py", "tools/hc_config.py"),
+    ("tools/verify.py", "tools/verify.py"),
 ]
 
 RUN_LOOP = r'''#!/data/data/com.termux/files/usr/bin/bash

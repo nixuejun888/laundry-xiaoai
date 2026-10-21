@@ -38,6 +38,7 @@ FILES = [
     "tools/hc_status.py",
     "tools/hc_announce.py",
     "tools/hc_config.py",
+    "tools/verify.py",
     "examples/config.example.json",
     "examples/homeconnect.example.json",
     "README.md",

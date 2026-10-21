@@ -223,7 +223,8 @@ python ~/laundry-xiaoai/tools/hc_announce.py
 │  ├─ stop.py              # 停止音箱播放
 │  ├─ hc_status.py         # 打印晶御 API 状态字段
 │  ├─ hc_announce.py       # 切换播报模式
-│  └─ hc_config.py         # 填晶御 client_id 并授权
+│  ├─ hc_config.py         # 填晶御 client_id 并授权
+│  └─ verify.py           # 一键检查方案 A/B 是否都通
 └─ run-loop.sh / hc-loop.sh（生成）
 ```
 
@@ -234,6 +235,7 @@ python ~/laundry-xiaoai/tools/hc_announce.py
 | `python ~/laundry-xiaoai/tools/diag.py` | 诊断 |
 | `python ~/laundry-xiaoai/tools/fix.py` | 更新并重启 |
 | `python ~/laundry-xiaoai/tools/showlog.py` | 看日志 |
+| `python ~/laundry-xiaoai/tools/verify.py` | 一键检查方案 A/B 是否都通 |
 
 HTTP 接口（只监听 127.0.0.1）：
 
