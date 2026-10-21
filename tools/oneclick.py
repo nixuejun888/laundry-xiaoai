@@ -41,6 +41,7 @@ FILES = [
     ("tools/hc_status.py", "tools/hc_status.py"),
     ("tools/hc_announce.py", "tools/hc_announce.py"),
     ("tools/hc_config.py", "tools/hc_config.py"),
+    ("tools/oneclick.py", "tools/oneclick.py"),
 ]
 
 
@@ -115,17 +116,24 @@ def update_tools(verbose=True):
         print(f"更新源：{base}")
     ok = 0
     for rel, dest in FILES:
-        try:
-            data = urllib.request.urlopen(f"{base}/{rel}", timeout=30).read()
-            if len(data) < 500:
-                continue
-            target = APP_DIR / dest
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(data)
-            ok += 1
-        except Exception as exc:  # noqa: BLE001
-            if verbose:
-                print(f"  ⚠️ {rel} 更新失败：{exc}")
+        name = Path(rel).name
+        last_err = None
+        for url in (f"{base}/{rel}", f"{base}/{name}"):
+            try:
+                data = urllib.request.urlopen(url, timeout=30).read()
+                if len(data) < 500:
+                    last_err = RuntimeError("内容太小")
+                    continue
+                target = APP_DIR / dest
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
+                ok += 1
+                last_err = None
+                break
+            except Exception as exc:  # noqa: BLE001
+                last_err = exc
+        if last_err is not None and verbose:
+            print(f"  ⚠️ {rel} 更新失败：{last_err}")
     if verbose:
         print(f"✅ 本地工具已更新（{ok}/{len(FILES)} 个文件）")
     return ok
