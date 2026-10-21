@@ -102,13 +102,34 @@ async def dump_spec(svc, did: str):
     return spec
 
 
-def guess_control(spec, keyword=("升降", "位置", "下降", "position", "Position")):
+def guess_control(spec):
+    """优先找 Motor Control（带 Down 枚举），其次 Control/升降，最后才 Position。"""
+    candidates = []
     for svc_item in (spec or {}).get("services") or []:
+        siid = svc_item.get("iid")
         for p in svc_item.get("properties") or []:
-            desc = (p.get("description") or "") + " " + str(p.get("type") or "")
-            if any(k in desc for k in keyword):
-                return svc_item.get("iid"), p.get("iid"), p.get("description")
-    return None, None, None
+            desc = (p.get("description") or "").lower()
+            vals = p.get("value-list") or p.get("valueList") or []
+            down_val = None
+            for v in vals:
+                if str(v.get("description", "")).lower() in ("down", "下降"):
+                    down_val = v.get("value")
+            score = 0
+            if "motor control" in desc or "motor" in desc:
+                score += 20
+            elif "control" in desc or "升降" in desc:
+                score += 10
+            if down_val is not None:
+                score += 10
+            if "position" in desc:
+                score -= 15
+            if score > 0:
+                candidates.append((score, siid, p.get("iid"), p.get("description"), down_val))
+    if not candidates:
+        return None, None, None, None
+    candidates.sort(reverse=True)
+    _, siid, piid, desc, down_val = candidates[0]
+    return siid, piid, desc, down_val
 
 
 async def try_set(svc, did, siid, piid, value):
@@ -152,7 +173,7 @@ async def wizard(cfg):
 
     print("\n② 读取 MIoT 规格，自动找升降控制…")
     spec = await dump_spec(svc, did)
-    siid, piid, desc = guess_control(spec) if spec else (None, None, None)
+    siid, piid, desc, down_default = guess_control(spec) if spec else (None, None, None, None)
     if siid is not None:
         print(f"\n建议：siid={siid}, piid={piid}（{desc}）")
     else:
@@ -161,7 +182,8 @@ async def wizard(cfg):
     siid = ask(f"siid（回车={siid or 2}）：", str(siid or 2))
     piid = ask(f"piid（回车={piid or 5}）：", str(piid or 5))
     mode = ask("控制方式：1=设置属性(miot_set_prop) / 2=调用动作(miot_action)（回车=1）：", "1")
-    down_val = ask("下降用值（回车=2）：", "2")
+    down_val = ask(f"下降用值（回车={down_default if down_default is not None else 2}）：",
+                   str(down_default if down_default is not None else 2))
     if mode == "2":
         aiid = ask("aiid（回车=1）：", "1")
         args = ask("动作参数，逗号分隔（回车为空）：", "")
