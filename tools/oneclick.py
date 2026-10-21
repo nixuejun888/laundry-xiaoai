@@ -368,6 +368,48 @@ def action_rack():
     run_script(r, timeout=1200)
 
 
+def action_test_rack():
+    banner("测试晾衣架联动")
+    cfg_path = CFG_DIR / "config.json"
+    try:
+        cfg = json.loads(read_text(cfg_path, "{}"))
+    except Exception:
+        cfg = {}
+    pa = cfg.get("post_actions") or {}
+    print("当前 post_actions：")
+    print(json.dumps(pa, ensure_ascii=False, indent=2) if pa else "(未配置)")
+    if not pa.get("enabled") or not (pa.get("washer") or pa.get("dryer")):
+        print("❌ 还没配置联动动作，请先选 11 配置晾衣架")
+        return
+    print()
+    print("1) 只执行动作（不播报，测试晾衣架）")
+    print("2) 完整测试（播报 + 动作）")
+    mode = input("选择 1/2（回车=1）：").strip() or "1"
+    b = find("bridge.py")
+    if not b:
+        print("❌ 找不到 bridge.py，先选 9 更新本地工具")
+        return
+    if mode == "2":
+        print("发送 /washer（会播报并触发联动）…")
+        try:
+            with urllib.request.urlopen(BRIDGE + "/washer", timeout=120) as r:
+                print("bridge 返回：", r.read().decode("utf-8", "replace")[:300])
+        except Exception as exc:
+            print("❌ 请求失败：", exc)
+    else:
+        run_script(b, ("--run-actions", "washer"), timeout=120)
+    print()
+    print("看晾衣架是否下降；下面是对应日志：")
+    try:
+        lines = read_text(CFG_DIR / "bridge.log").splitlines()
+        hit = [l for l in lines[-200:] if ("联动" in l or "MIoT play-text" in l)]
+        print("\n".join(hit[-12:]) if hit else "(日志里没有联动记录)")
+    except Exception:
+        pass
+    print()
+    print("如果没反应：检查 DID/siid/piid 是否正确（选 11 重新配置或跑 rack.py --spec）。")
+
+
 def action_update():
     banner("更新本地工具")
     n = update_tools()
@@ -401,9 +443,10 @@ def main():
         print("  9) 更新本地工具到最新")
         print(" 10) 晶御重新授权（方案 B）")
         print(" 11) 晾衣架联动设置（播报后自动下降）")
+        print(" 12) 测试晾衣架联动（不播报/完整）")
         print("  0) 退出")
         try:
-            choice = input("输入 1-11 或 0：").strip()
+            choice = input("输入 1-12 或 0：").strip()
         except (EOFError, KeyboardInterrupt):
             print("\n退出。")
             return 0
@@ -430,11 +473,13 @@ def main():
                 action_hc_reauth()
             elif choice == "11":
                 action_rack()
+            elif choice == "12":
+                action_test_rack()
             elif choice == "0":
                 print("再见。")
                 return 0
             else:
-                print("请输入 1-11 或 0。")
+                print("请输入 1-12 或 0。")
         except KeyboardInterrupt:
             print("\n已取消当前操作。")
         except Exception as exc:  # noqa: BLE001
