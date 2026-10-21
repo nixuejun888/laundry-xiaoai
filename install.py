@@ -41,6 +41,7 @@ FILES = [
     "tools/verify.py",
     "tools/oneclick.py",
     "tools/rack.py",
+    "tools/airer_diag.py",
     "tools/fix_login.py",
     "examples/config.example.json",
     "examples/homeconnect.example.json",

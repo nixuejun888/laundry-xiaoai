@@ -227,7 +227,8 @@ python ~/laundry-xiaoai/tools/hc_announce.py
 │  ├─ verify.py           # 一键检查方案 A/B 是否都通
 │  ├─ fix_login.py        # 一键修复小米登录（mi.token/70016）
 │  ├─ oneclick.py         # 一键中心菜单（体检/登录/自检/重启/播报/模式/日志/晶御重授权/晾衣架联动）
-│  └─ rack.py             # 晾衣架联动配置向导（播报后自动下降）
+│  ├─ rack.py             # 晾衣架联动配置向导（播报后自动下降）
+│  └─ airer_diag.py       # 晾衣架控制诊断（排查没反应）
 └─ run-loop.sh / hc-loop.sh（生成）
 ```
 

@@ -39,6 +39,7 @@ FILES = [
     ("tools/verify.py", "tools/verify.py"),
     ("tools/oneclick.py", "tools/oneclick.py"),
     ("tools/rack.py", "tools/rack.py"),
+    ("tools/airer_diag.py", "tools/airer_diag.py"),
     ("tools/fix_login.py", "tools/fix_login.py"),
 ]
 
