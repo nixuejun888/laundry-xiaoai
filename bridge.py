@@ -31,9 +31,9 @@ HTTP 接口（只绑定 127.0.0.1，仅本机可访问）
   GET  /test?text=xxx         播报任意文本
   GET/POST /notify?text=xxx   按关键词自动分类后播报（关键词没命中则不播报）
 
-配置文件：~/.config/laundry-alert/config.json
-登录缓存：~/.config/laundry-alert/mi.token
-运行日志：~/.config/laundry-alert/bridge.log
+配置文件：~/.config/laundry-xiaoai/config.json
+登录缓存：~/.config/laundry-xiaoai/mi.token
+运行日志：~/.config/laundry-xiaoai/bridge.log
 """
 
 import argparse
@@ -48,10 +48,12 @@ import time
 from getpass import getpass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import urllib.request
 from urllib.parse import parse_qs, urlparse
 
 APP_NAME = "laundry-xiaoai"
-CONFIG_DIR = Path.home() / ".config" / APP_NAME
+CONFIG_DIR = Path(os.environ.get("LAUNDRY_XIAOAI_HOME")
+                  or (Path.home() / ".config" / APP_NAME))
 CONFIG_PATH = CONFIG_DIR / "config.json"
 TOKEN_PATH = CONFIG_DIR / "mi.token"
 LOG_PATH = CONFIG_DIR / "bridge.log"
@@ -116,6 +118,8 @@ DEFAULT_CONFIG = {
         #   http        : {"url":"http://...","method":"GET","delay_sec":0}
         # 每个动作可选 followup_text / followup_delay_sec：
         #   动作成功后延迟 N 秒再播报一句（例如晾衣架降到底后提醒去晾衣服）
+        # 可选 followup_on_status：轮询设备状态直到到达目标值再播报（比固定延迟更准）
+        #   {"siid":2,"piid":2,"value":4,"timeout_sec":90,"poll_sec":2}
         "washer": [],
         "dryer": [],
     },
@@ -265,6 +269,11 @@ async def _miot_set_prop_async(cfg: dict, did: str, siid: int, piid: int, value)
 async def _miot_action_async(cfg: dict, did: str, siid: int, aiid: int, args):
     service = await _miio_service_async(cfg)
     return _code_of(await service.miot_action(str(did), (siid, aiid), list(args or [])))
+
+
+async def _miot_get_prop_async(cfg: dict, did: str, siid: int, piid: int):
+    service = await _miio_service_async(cfg)
+    return await service.miot_get_prop(str(did), (siid, piid))
 
 
 def _fmt_devices(devices) -> str:
@@ -611,6 +620,34 @@ class BridgeHandler(BaseHTTPRequestHandler):
         log.info("联动后续播报：%s -> %s", text,
                  result.get("skipped") or ("ok" if result.get("ok") else result.get("error")))
 
+    def _speak_on_status(self, text: str, status_cfg: dict, action: dict):
+        """轮询设备状态直到达到目标值（如晾衣架"停止下限位"），再播报。"""
+        did = action.get("did")
+        siid = int(status_cfg.get("siid", 2))
+        piid = int(status_cfg.get("piid", 2))
+        want = status_cfg.get("value")
+        timeout = float(status_cfg.get("timeout_sec") or 90)
+        poll = float(status_cfg.get("poll_sec") or 2)
+        deadline = time.time() + timeout
+        reached = False
+        while time.time() < deadline:
+            try:
+                value = asyncio.run(_miot_get_prop_async(self.cfg, did, siid, piid))
+                log.info("联动状态轮询 %s: siid=%s piid=%s value=%s（期望 %s）",
+                         did, siid, piid, value, want)
+                if str(value) == str(want) or (isinstance(value, (int, float))
+                                               and isinstance(want, (int, float))
+                                               and float(value) == float(want)):
+                    reached = True
+                    break
+            except Exception as exc:  # noqa: BLE001
+                log.warning("联动状态查询失败：%s", exc)
+            time.sleep(poll)
+        if not reached:
+            log.warning("等待设备状态超时（%ss），仍然播报：%s", int(timeout), text)
+        extra = float(action.get("followup_delay_sec") or 0)
+        self._speak_followup(text, extra)
+
     # ---------------- 播报后联动动作 ----------------
     def _run_post_actions(self, category: str):
         cfg_actions = self.cfg.get("post_actions") or {}
@@ -667,10 +704,16 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 return
             followup = action.get("followup_text")
             if followup:
-                delay2 = float(action.get("followup_delay_sec") or 0)
-                log.info("联动动作成功，%ss 后播报：%s", int(delay2), followup)
-                threading.Thread(target=self._speak_followup,
-                                 args=(str(followup), delay2), daemon=True).start()
+                status_cfg = action.get("followup_on_status")
+                if status_cfg:
+                    threading.Thread(target=self._speak_on_status,
+                                     args=(str(followup), dict(status_cfg), dict(action)),
+                                     daemon=True).start()
+                else:
+                    delay2 = float(action.get("followup_delay_sec") or 0)
+                    log.info("联动动作成功，%ss 后播报：%s", int(delay2), followup)
+                    threading.Thread(target=self._speak_followup,
+                                     args=(str(followup), delay2), daemon=True).start()
         except Exception as exc:  # noqa: BLE001
             log.warning("联动动作异常（%s）：%s", typ, exc)
 
@@ -709,6 +752,8 @@ def main(argv=None) -> int:
                         help="真播报一次预设文案")
     parser.add_argument("--test-text", metavar="TEXT", help="真播报一段任意文字")
     parser.add_argument("--classify", metavar="TEXT", help="只测试关键词分类，不发请求")
+    parser.add_argument("--run-actions", metavar="CATEGORY",
+                        help="只执行该类别配置的联动动作、不播报（测试晾衣架用，如 washer）")
     parser.add_argument("--dry-run", action="store_true", help="不连小米，只跑 HTTP 流程")
     parser.add_argument("--host", help="覆盖监听地址（默认取配置）")
     parser.add_argument("--port", type=int, help="覆盖监听端口（默认取配置）")
@@ -721,6 +766,22 @@ def main(argv=None) -> int:
     if args.classify is not None:
         cat = classify(args.classify, cfg)
         print(json.dumps({"text": args.classify, "category": cat}, ensure_ascii=False))
+        return 0
+
+    if args.run_actions:
+        actions = (cfg.get("post_actions") or {}).get(args.run_actions) or []
+        if not actions:
+            print(json.dumps({"ok": False,
+                              "error": f"没有配置 {args.run_actions} 的联动动作（先跑 tools/rack.py 或一键中心 11）"},
+                             ensure_ascii=False))
+            return 2
+        handler = BridgeHandler.__new__(BridgeHandler)
+        handler.cfg = cfg
+        handler.dry_run = False
+        print(f"执行 {args.run_actions} 的联动动作（共 {len(actions)} 个）…", flush=True)
+        for action in actions:
+            handler._run_action(dict(action))
+        print(json.dumps({"ok": True, "ran": len(actions)}, ensure_ascii=False))
         return 0
 
     if args.login:

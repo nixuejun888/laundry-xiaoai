@@ -132,6 +132,18 @@ def guess_control(spec):
     return siid, piid, desc, down_val
 
 
+def guess_lower_status(spec):
+    """找“停止下限位/到底”的状态属性，用于精确等待降到底。"""
+    for svc_item in (spec or {}).get("services") or []:
+        siid = svc_item.get("iid")
+        for p in svc_item.get("properties") or []:
+            for v in (p.get("value-list") or p.get("valueList") or []):
+                desc = str(v.get("description", "")).lower()
+                if ("lower" in desc and ("limit" in desc or "stop" in desc)) or "下限位" in desc:
+                    return siid, p.get("iid"), v.get("value")
+    return None
+
+
 async def try_set(svc, did, siid, piid, value):
     code = _code(await svc.miot_set_prop(str(did), (int(siid), int(piid)), value))
     print(f"  miot_set_prop did={did} siid={siid} piid={piid} value={value} -> code={code}"
@@ -234,7 +246,18 @@ async def wizard(cfg):
     followup = ask("降到底后播报什么？（回车=晾衣架已准备就绪，去晾衣服吧）：",
                    "晾衣架已准备就绪，去晾衣服吧")
     action["followup_text"] = followup
-    action["followup_delay_sec"] = travel
+    status = guess_lower_status(spec) if spec else None
+    if status:
+        s_siid, s_piid, s_val = status
+        action["followup_on_status"] = {
+            "siid": int(s_siid), "piid": int(s_piid), "value": s_val,
+            "timeout_sec": max(travel + 30, 60), "poll_sec": 2,
+        }
+        action["followup_delay_sec"] = 0
+        print(f"已启用“降到底检测”：轮询 siid={s_siid} piid={s_piid} 直到值={s_val}，再播报")
+    else:
+        action["followup_delay_sec"] = travel
+        print(f"没识别到底部状态，使用固定延迟 {travel} 秒")
     cats = ask("播报哪个类别后执行？1=洗衣完成 2=烘干完成 3=两者都（回车=1）：", "1")
     cfg.setdefault("post_actions", {})
     pa = cfg["post_actions"]
