@@ -176,10 +176,37 @@ async def wizard(cfg):
         action = {"type": "miot_set_prop", "did": did, "siid": int(siid),
                   "piid": int(piid), "value": int(down_val)}
 
-    ok = ask("晾衣架有反应吗？(y/N)：", "n").lower() == "y"
+    ok = False
+    for attempt in range(3):
+        ok = ask("晾衣架有反应吗？(y/N)：", "n").lower() == "y"
+        if ok:
+            break
+        print("可以调整参数再试：")
+        siid = ask(f"siid（回车={siid}）：", str(siid))
+        piid = ask(f"piid（回车={piid}）：", str(piid))
+        down_val = ask(f"下降值（回车={down_val}）：", str(down_val))
+        print("重新测试…")
+        if action.get("type") == "miot_action":
+            aiid = ask(f"aiid（回车={action.get('aiid', 1)}）：", str(action.get("aiid", 1)))
+            await try_action(svc, did, siid, aiid, action.get("args") or [])
+            action.update({"siid": int(siid), "aiid": int(aiid)})
+        else:
+            await try_set(svc, did, siid, piid, int(down_val))
+            action.update({"siid": int(siid), "piid": int(piid), "value": int(down_val)})
     if not ok:
-        print("那这次先不保存。可以再跑一次向导，换 siid/piid/值 或改成动作方式。")
+        print("那这次先不保存。可以把 `python ~/laundry-xiaoai/tools/rack.py --spec <did>` 的输出发我，我帮你确认参数。")
         return
+    correct = ask("方向是「下降」对吗？(Y/n)：", "y").lower() != "n"
+    if not correct and action.get("type") != "miot_action":
+        new_val = ask("那换一个下降值（上升/下降可能相反，如 1）：", "")
+        if new_val.strip():
+            action["value"] = int(new_val)
+            print("重新测试…")
+            await try_set(svc, did, action.get("siid", siid), action.get("piid", piid), int(new_val))
+            confirm = ask("这次是下降了吗？(y/N)：", "n").lower() == "y"
+            if not confirm:
+                print("方向仍不对，先不保存；把规格输出发我帮你确认。")
+                return
     action["delay_sec"] = int(ask("延迟几秒执行（回车=3）：", "3") or 3)
     travel = int(ask("晾衣架从顶部降到底部大约几秒？（用于降到底后播报，回车=20）：", "20") or 20)
     followup = ask("降到底后播报什么？（回车=晾衣架已准备就绪，去晾衣服吧）：",
