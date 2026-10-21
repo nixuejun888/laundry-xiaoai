@@ -248,13 +248,19 @@ def action_full_auto():
     ensure_service()
     if not token_ok():
         print("\n⚠️ 检测到没有小米 token，进入登录修复…")
-        run_script(find("fix_login.py") or find("fix_login.py"), ()) if find("fix_login.py") else print("找不到 fix_login.py")
+        f = find("fix_login.py")
+        if f:
+            run_script(f)
+        else:
+            print("❌ 找不到 fix_login.py，先选 9 更新本地工具")
     print()
     print("测试播报…")
     b = find("bridge.py")
     if b:
         run_script(b, ("--test", "washer"), timeout=120)
     print()
+    print("等 6 秒再自检（避免测试播报和自检播报互相打断）…")
+    time.sleep(6)
     check_b()
     print("\n如果还有 ❌，把上面的输出发我。")
 
