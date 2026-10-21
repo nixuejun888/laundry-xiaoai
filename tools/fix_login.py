@@ -158,8 +158,8 @@ def ensure_miservice():
 
 async def do_login(username, password):
     from miservice import MiAccount, MiNAService
-    account = MiAccount(str(TOKEN), username, password)
-    await account.login(username, password)
+    # 与 bridge.py 完全一致的用法：凭据放构造参数，device_list() 惰性登录并写 token
+    account = MiAccount(None, username, password, str(TOKEN))
     devices = await MiNAService(account).device_list()
     try:
         token = getattr(account, "token", None)
