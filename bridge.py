@@ -114,6 +114,8 @@ DEFAULT_CONFIG = {
         #   miot_set_prop: {"did":"...","siid":2,"piid":5,"value":2,"delay_sec":3}
         #   miot_action : {"did":"...","siid":2,"aiid":1,"args":[],"delay_sec":0}
         #   http        : {"url":"http://...","method":"GET","delay_sec":0}
+        # 每个动作可选 followup_text / followup_delay_sec：
+        #   动作成功后延迟 N 秒再播报一句（例如晾衣架降到底后提醒去晾衣服）
         "washer": [],
         "dryer": [],
     },
@@ -556,12 +558,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
             log.exception("处理请求失败: %s", exc)
             return self._write_json(500, {"ok": False, "error": str(exc)})
 
-    def _speak(self, category: str, text: str, bypass_cooldown: bool = False):
+    def _do_speak(self, category: str, text: str, bypass_cooldown: bool = False) -> dict:
+        """执行一次播报并返回结果 dict（不写 HTTP 响应，供后台任务复用）。"""
         if in_quiet_hours(self.cfg):
             log.info("免打扰时段，跳过播报 category=%s", category)
-            return self._write_json(200, {
-                "ok": True, "skipped": "quiet-hours", "category": category,
-            })
+            return {"ok": True, "skipped": "quiet-hours", "category": category}
         now = time.monotonic()
         gap = float(self.cfg.get("min_gap_sec") or 0)
         cooldown = self.cfg["cooldown_linger_sec"] if category == "linger" else self.cfg["cooldown_sec"]
@@ -570,19 +571,15 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if gap > 0 and last_any and now - last_any < gap:
                 remain = int(gap - (now - last_any)) + 1
                 log.info("全局防打断跳过 category=%s（%ss 内刚播过）", category, remain)
-                return self._write_json(200, {
-                    "ok": True, "skipped": "too-soon",
-                    "category": category, "remain_sec": remain,
-                })
+                return {"ok": True, "skipped": "too-soon",
+                        "category": category, "remain_sec": remain}
             if not bypass_cooldown:
                 last = LAST_SPOKEN.get(category)
                 if last is not None and now - last < cooldown:
                     remain = int(cooldown - (now - last))
                     log.info("去抖跳过 category=%s，%ss 后可再播", category, remain)
-                    return self._write_json(200, {
-                        "ok": True, "skipped": "cooldown",
-                        "category": category, "remain_sec": remain,
-                    })
+                    return {"ok": True, "skipped": "cooldown",
+                            "category": category, "remain_sec": remain}
                 # 先占位，避免同一通知的并发触发（如 App 重试/通知刷新）重复播报；
                 # 播报失败时下面再释放。
                 LAST_SPOKEN[category] = now
@@ -596,10 +593,22 @@ class BridgeHandler(BaseHTTPRequestHandler):
             with LOCK:
                 LAST_SPOKEN[category] = time.monotonic()
         type(self).last_result = dict(result, ts=time.strftime("%Y-%m-%d %H:%M:%S"))
-        code = 200 if result.get("ok") else 500
         if result.get("ok"):
             self._run_post_actions(category)
+        return result
+
+    def _speak(self, category: str, text: str, bypass_cooldown: bool = False):
+        result = self._do_speak(category, text, bypass_cooldown)
+        code = 200 if result.get("ok") else 500
         return self._write_json(code, result)
+
+    def _speak_followup(self, text: str, delay: float):
+        """联动动作完成后（如晾衣架降到底）再播报一句。"""
+        if delay > 0:
+            time.sleep(delay)
+        result = self._do_speak("rack_ready", text, bypass_cooldown=True)
+        log.info("联动后续播报：%s -> %s", text,
+                 result.get("skipped") or ("ok" if result.get("ok") else result.get("error")))
 
     # ---------------- 播报后联动动作 ----------------
     def _run_post_actions(self, category: str):
@@ -646,6 +655,13 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 return
             if not ok:
                 log.warning("联动动作失败：%s", action)
+                return
+            followup = action.get("followup_text")
+            if followup:
+                delay2 = float(action.get("followup_delay_sec") or 0)
+                log.info("联动动作成功，%ss 后播报：%s", int(delay2), followup)
+                threading.Thread(target=self._speak_followup,
+                                 args=(str(followup), delay2), daemon=True).start()
         except Exception as exc:  # noqa: BLE001
             log.warning("联动动作异常（%s）：%s", typ, exc)
 

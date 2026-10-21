@@ -282,7 +282,8 @@ python ~/laundry-xiaoai/tools/rack.py   # 交互式向导：选设备 → 读 MI
   "enabled": true,
   "washer": [
     {"type": "miot_set_prop", "did": "设备DID", "siid": 2, "piid": 5,
-     "value": 2, "delay_sec": 3}
+     "value": 2, "delay_sec": 3,
+     "followup_text": "晾衣架已准备就绪，去晾衣服吧", "followup_delay_sec": 20}
   ],
   "dryer": []
 }

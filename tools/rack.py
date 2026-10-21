@@ -181,6 +181,11 @@ async def wizard(cfg):
         print("那这次先不保存。可以再跑一次向导，换 siid/piid/值 或改成动作方式。")
         return
     action["delay_sec"] = int(ask("延迟几秒执行（回车=3）：", "3") or 3)
+    travel = int(ask("晾衣架从顶部降到底部大约几秒？（用于降到底后播报，回车=20）：", "20") or 20)
+    followup = ask("降到底后播报什么？（回车=晾衣架已准备就绪，去晾衣服吧）：",
+                   "晾衣架已准备就绪，去晾衣服吧")
+    action["followup_text"] = followup
+    action["followup_delay_sec"] = travel
     cats = ask("播报哪个类别后执行？1=洗衣完成 2=烘干完成 3=两者都（回车=1）：", "1")
     cfg.setdefault("post_actions", {})
     pa = cfg["post_actions"]
@@ -215,9 +220,10 @@ async def main_async(args):
         ok = await try_set(svc, did, siid, piid, value)
         return 0 if ok else 1
     if args.action:
-        did, siid, aiid, *rest = args.action
+        did, siid, aiid, raw_args = args.action
+        arg_list = [int(x) for x in str(raw_args).replace("，", ",").split(",") if x.strip()]
         svc = await get_service(cfg)
-        ok = await try_action(svc, did, siid, aiid, rest)
+        ok = await try_action(svc, did, siid, aiid, arg_list)
         return 0 if ok else 1
     await wizard(cfg)
     return 0
@@ -230,8 +236,8 @@ def main():
     parser.add_argument("--spec", metavar="DID", help="打印设备的 MIoT 规格")
     parser.add_argument("--set", nargs=4, metavar=("DID", "SIID", "PIID", "VALUE"),
                         help="测试设置属性")
-    parser.add_argument("--action", nargs="+", metavar=("DID", "SIID", "AIID", "ARGS"),
-                        help="测试调用动作")
+    parser.add_argument("--action", nargs=4, metavar=("DID", "SIID", "AIID", "ARGS"),
+                        help="测试调用动作（ARGS 用逗号分隔）")
     args = parser.parse_args()
     return asyncio.run(main_async(args))
 
