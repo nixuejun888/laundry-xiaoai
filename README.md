@@ -295,6 +295,24 @@ python ~/laundry-xiaoai/tools/rack.py   # 交互式向导：选设备 → 读 MI
 - 只对播报成功的类别执行；免打扰/去抖导致不播报时也不会执行；
 - ⚠️ 自动下降晾衣架有安全风险（下方有人/物），请先测试确认，必要时把 `enabled` 设为 false 随时停用。
 
+**已实测机型：米家智能晾衣机 Pro（`xiaomi.airer.pro3`，DID 换成你自己的）**
+
+```json
+"wash": [
+  {"type": "miot_set_prop", "did": "<设备DID>", "siid": 2, "piid": 5, "value": 2,
+   "delay_sec": 3,
+   "followup_text": "晾衣架已准备就绪，去晾衣服吧",
+   "followup_on_status": {"siid": 2, "piid": 2, "value": 4,
+                           "timeout_sec": 120, "poll_sec": 2},
+   "followup_delay_sec": 0}
+]
+```
+
+- `siid=2 / piid=5`：Motor Control，`0=暂停 / 1=上升 / 2=下降`；
+- `piid=2`：Status，`0=停止-上限位 / 1=上升中 / 2=下降中 / 3=停止 / 4=停止-下限位`；
+- 用 `followup_on_status` 等 `status=4` 再播报，比固定延迟准确；
+- 其他型号请先 `python tools/rack.py --spec <DID>` 查看真实规格再配置。
+
 ## 10. 安全与隐私
 
 - 所有数据都在你手机本地：`~/.config/laundry-xiaoai/`（小米 token、晶御 token、配置）；文件权限 600；
