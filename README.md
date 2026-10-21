@@ -225,7 +225,8 @@ python ~/laundry-xiaoai/tools/hc_announce.py
 │  ├─ hc_announce.py       # 切换播报模式
 │  ├─ hc_config.py         # 填晶御 client_id 并授权
 │  ├─ verify.py           # 一键检查方案 A/B 是否都通
-│  └─ fix_login.py        # 一键修复小米登录（mi.token/70016）
+│  ├─ fix_login.py        # 一键修复小米登录（mi.token/70016）
+│  └─ oneclick.py         # 一键中心菜单（体检/登录/自检/重启/播报/模式/日志）
 └─ run-loop.sh / hc-loop.sh（生成）
 ```
 
