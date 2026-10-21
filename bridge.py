@@ -78,6 +78,9 @@ DEFAULT_CONFIG = {
     # 去抖：同一类别 N 秒内只播一次，防止微信通知重复/刷新导致复读。
     "cooldown_sec": 300,
     "cooldown_linger_sec": 1800,
+    # 全局最小播报间隔（秒）：防止两个触发源同时到达时，第二条 TTS 打断正在播的第一句。
+    # 0 = 关闭该保护。
+    "min_gap_sec": 4,
     # 免打扰时段：在这个时间段内不播报（适合半夜洗完的衣服）。
     # enabled=false 关闭；支持跨零点，例如 23:00 -> 07:30。
     "quiet_hours": {"enabled": False, "start": "23:00", "end": "07:30"},
@@ -107,6 +110,8 @@ DEFAULT_CONFIG = {
 log = logging.getLogger(APP_NAME)
 LOCK = threading.Lock()
 LAST_SPOKEN = {}  # category -> monotonic timestamp
+LAST_ANY_SPOKEN = [0.0]  # 上一次真正开始播报的时间（全局，防 TTS 互相打断）
+SPEAK_EXEC_LOCK = threading.Lock()  # 串行化 TTS 调用，避免并发命令互相抢占
 
 
 # --------------------------------------------------------------------------- #
@@ -518,9 +523,18 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "ok": True, "skipped": "quiet-hours", "category": category,
             })
         now = time.monotonic()
-        if not bypass_cooldown:
-            cooldown = self.cfg["cooldown_linger_sec"] if category == "linger" else self.cfg["cooldown_sec"]
-            with LOCK:
+        gap = float(self.cfg.get("min_gap_sec") or 0)
+        cooldown = self.cfg["cooldown_linger_sec"] if category == "linger" else self.cfg["cooldown_sec"]
+        with LOCK:
+            last_any = LAST_ANY_SPOKEN[0]
+            if gap > 0 and last_any and now - last_any < gap:
+                remain = int(gap - (now - last_any)) + 1
+                log.info("全局防打断跳过 category=%s（%ss 内刚播过）", category, remain)
+                return self._write_json(200, {
+                    "ok": True, "skipped": "too-soon",
+                    "category": category, "remain_sec": remain,
+                })
+            if not bypass_cooldown:
                 last = LAST_SPOKEN.get(category)
                 if last is not None and now - last < cooldown:
                     remain = int(cooldown - (now - last))
@@ -532,8 +546,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 # 先占位，避免同一通知的并发触发（如 App 重试/通知刷新）重复播报；
                 # 播报失败时下面再释放。
                 LAST_SPOKEN[category] = now
+            LAST_ANY_SPOKEN[0] = now
 
-        result = asyncio.run(speak_async(text, self.cfg, self.dry_run))
+        # 串行化真正的 TTS 调用：两条播报命令重叠时，小爱往往只读到一半就被打断
+        with SPEAK_EXEC_LOCK:
+            result = asyncio.run(speak_async(text, self.cfg, self.dry_run))
         result.update({"category": category, "text": text})
         if result.get("ok") and not bypass_cooldown:
             with LOCK:

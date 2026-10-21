@@ -9,6 +9,7 @@
   "listen_port": 8765,
   "cooldown_sec": 300,
   "cooldown_linger_sec": 1800,
+  "min_gap_sec": 4,
   "quiet_hours": {
     "enabled": false,
     "start": "23:00",
