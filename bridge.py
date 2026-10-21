@@ -558,7 +558,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
             log.exception("处理请求失败: %s", exc)
             return self._write_json(500, {"ok": False, "error": str(exc)})
 
-    def _do_speak(self, category: str, text: str, bypass_cooldown: bool = False) -> dict:
+    def _do_speak(self, category: str, text: str, bypass_cooldown: bool = False,
+                  respect_gap: bool = True) -> dict:
         """执行一次播报并返回结果 dict（不写 HTTP 响应，供后台任务复用）。"""
         if in_quiet_hours(self.cfg):
             log.info("免打扰时段，跳过播报 category=%s", category)
@@ -568,7 +569,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         cooldown = self.cfg["cooldown_linger_sec"] if category == "linger" else self.cfg["cooldown_sec"]
         with LOCK:
             last_any = LAST_ANY_SPOKEN[0]
-            if gap > 0 and last_any and now - last_any < gap:
+            if respect_gap and gap > 0 and last_any and now - last_any < gap:
                 remain = int(gap - (now - last_any)) + 1
                 log.info("全局防打断跳过 category=%s（%ss 内刚播过）", category, remain)
                 return {"ok": True, "skipped": "too-soon",
@@ -606,7 +607,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         """联动动作完成后（如晾衣架降到底）再播报一句。"""
         if delay > 0:
             time.sleep(delay)
-        result = self._do_speak("rack_ready", text, bypass_cooldown=True)
+        result = self._do_speak("rack_ready", text, bypass_cooldown=True, respect_gap=False)
         log.info("联动后续播报：%s -> %s", text,
                  result.get("skipped") or ("ok" if result.get("ok") else result.get("error")))
 
@@ -615,13 +616,21 @@ class BridgeHandler(BaseHTTPRequestHandler):
         cfg_actions = self.cfg.get("post_actions") or {}
         if not cfg_actions.get("enabled") or self.dry_run:
             return
-        actions = cfg_actions.get(category) or []
-        for action in actions:
+        actions = list(cfg_actions.get(category) or [])
+        if actions:
             try:
-                threading.Thread(target=self._run_action, args=(dict(action),),
-                                 daemon=True).start()
+                # 同一类别的多个动作按顺序执行（放在一个后台线程里）
+                threading.Thread(target=self._run_actions,
+                                 args=(category, actions), daemon=True).start()
             except Exception as exc:  # noqa: BLE001
                 log.warning("联动动作线程创建失败：%s", exc)
+
+    def _run_actions(self, category: str, actions):
+        for action in actions:
+            try:
+                self._run_action(dict(action))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("联动动作执行异常（%s）：%s", category, exc)
 
     def _run_action(self, action: dict):
         delay = float(action.get("delay_sec") or 0)
