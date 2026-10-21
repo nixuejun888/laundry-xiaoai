@@ -39,6 +39,7 @@ FILES = [
     "tools/hc_announce.py",
     "tools/hc_config.py",
     "tools/verify.py",
+    "tools/fix_login.py",
     "examples/config.example.json",
     "examples/homeconnect.example.json",
     "README.md",

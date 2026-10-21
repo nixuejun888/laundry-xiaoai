@@ -224,7 +224,8 @@ python ~/laundry-xiaoai/tools/hc_announce.py
 │  ├─ hc_status.py         # 打印晶御 API 状态字段
 │  ├─ hc_announce.py       # 切换播报模式
 │  ├─ hc_config.py         # 填晶御 client_id 并授权
-│  └─ verify.py           # 一键检查方案 A/B 是否都通
+│  ├─ verify.py           # 一键检查方案 A/B 是否都通
+│  └─ fix_login.py        # 一键修复小米登录（mi.token/70016）
 └─ run-loop.sh / hc-loop.sh（生成）
 ```
 
@@ -236,6 +237,7 @@ python ~/laundry-xiaoai/tools/hc_announce.py
 | `python ~/laundry-xiaoai/tools/fix.py` | 更新并重启 |
 | `python ~/laundry-xiaoai/tools/showlog.py` | 看日志 |
 | `python ~/laundry-xiaoai/tools/verify.py` | 一键检查方案 A/B 是否都通 |
+| `python ~/laundry-xiaoai/tools/fix_login.py` | 一键修复小米登录（token 丢失/70016）|
 
 HTTP 接口（只监听 127.0.0.1）：
 
