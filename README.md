@@ -226,7 +226,8 @@ python ~/laundry-xiaoai/tools/hc_announce.py
 │  ├─ hc_config.py         # 填晶御 client_id 并授权
 │  ├─ verify.py           # 一键检查方案 A/B 是否都通
 │  ├─ fix_login.py        # 一键修复小米登录（mi.token/70016）
-│  └─ oneclick.py         # 一键中心菜单（体检/登录/自检/重启/播报/模式/日志/晶御重授权）
+│  ├─ oneclick.py         # 一键中心菜单（体检/登录/自检/重启/播报/模式/日志/晶御重授权/晾衣架联动）
+│  └─ rack.py             # 晾衣架联动配置向导（播报后自动下降）
 └─ run-loop.sh / hc-loop.sh（生成）
 ```
 
@@ -239,7 +240,8 @@ python ~/laundry-xiaoai/tools/hc_announce.py
 | `python ~/laundry-xiaoai/tools/showlog.py` | 看日志 |
 | `python ~/laundry-xiaoai/tools/verify.py` | 一键检查方案 A/B 是否都通 |
 | `python ~/laundry-xiaoai/tools/fix_login.py` | 一键修复小米登录（token 丢失/70016）|
-| `python ~/laundry-xiaoai/tools/oneclick.py` | 一键中心菜单（含晶御重新授权）|
+| `python ~/laundry-xiaoai/tools/oneclick.py` | 一键中心菜单（含晶御重新授权、晾衣架联动）|
+| `python ~/laundry-xiaoai/tools/rack.py` | 晾衣架联动配置（播报后自动下降）|
 
 HTTP 接口（只监听 127.0.0.1）：
 
@@ -264,6 +266,32 @@ HTTP 接口（只监听 127.0.0.1）：
 | 验证码错误/失效 | 设备码 30 分钟过期；重新 `--login` 生成新码 |
 | `--dump` 里噪音多 | 正常；`announce.mode` 选 `minimal`，`speak_unknown` 保持 false |
 | 剩余时间播报跳变 | 已修复“中途启动误报大阈值”的逻辑；阈值只在向下跨过时播一次 |
+
+## 9.5 播报后联动米家设备（如晾衣架自动下降）
+
+米家极客版没有“小爱音箱语音播报”这种触发条件，所以不要绕极客版——让 bridge 在**播报成功后直接调用米家云**控制目标设备。
+
+```bash
+python ~/laundry-xiaoai/tools/rack.py   # 交互式向导：选设备 → 读 MIoT 规格 → 测试下降 → 保存
+```
+
+向导会写入 `config.json`：
+
+```json
+"post_actions": {
+  "enabled": true,
+  "washer": [
+    {"type": "miot_set_prop", "did": "设备DID", "siid": 2, "piid": 5,
+     "value": 2, "delay_sec": 3}
+  ],
+  "dryer": []
+}
+```
+
+- 支持三种动作：`miot_set_prop`（设置属性）、`miot_action`（调用动作）、`http`（任意 HTTP 请求）；
+- `delay_sec`：播报后延迟几秒执行（默认 3 秒）；
+- 只对播报成功的类别执行；免打扰/去抖导致不播报时也不会执行；
+- ⚠️ 自动下降晾衣架有安全风险（下方有人/物），请先测试确认，必要时把 `enabled` 设为 false 随时停用。
 
 ## 10. 安全与隐私
 

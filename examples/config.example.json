@@ -54,5 +54,10 @@
   },
   "notify_package_allow": [
     "com.tencent.mm"
-  ]
+  ],
+  "post_actions": {
+    "enabled": false,
+    "washer": [],
+    "dryer": []
+  }
 }

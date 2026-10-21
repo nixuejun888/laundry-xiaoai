@@ -105,6 +105,18 @@ DEFAULT_CONFIG = {
     # 这里限定只处理微信的通知，避免其他 App 的文本误触发。
     # 留空 [] = 不按包名过滤；请求里没带 package 时也按不过滤处理。
     "notify_package_allow": ["com.tencent.mm"],
+    # 播报成功后的联动动作（例如：洗衣机洗完 → 晾衣架自动下降）。
+    # 用 tools/rack.py 配置和测试；enabled=false 时全部不执行。
+    "post_actions": {
+        "enabled": False,
+        # washer / dryer 等类别名 -> 动作列表，按顺序执行
+        # 动作类型：
+        #   miot_set_prop: {"did":"...","siid":2,"piid":5,"value":2,"delay_sec":3}
+        #   miot_action : {"did":"...","siid":2,"aiid":1,"args":[],"delay_sec":0}
+        #   http        : {"url":"http://...","method":"GET","delay_sec":0}
+        "washer": [],
+        "dryer": [],
+    },
 }
 
 log = logging.getLogger(APP_NAME)
@@ -223,6 +235,34 @@ def in_quiet_hours(cfg: dict, now=None) -> bool:
 def _import_miservice():
     from miservice import MiAccount, MiNAService  # 延迟导入，--dry-run 不依赖
     return MiAccount, MiNAService
+
+
+async def _miio_service_async(cfg: dict):
+    """用本机保存的小米账号构造 MiIOService（用于联动控制其他米家设备）。"""
+    from miservice import MiAccount, MiIOService
+    account = MiAccount(None, cfg.get("username") or "", cfg.get("password") or "",
+                        str(TOKEN_PATH))
+    return MiIOService(account)
+
+
+def _code_of(result) -> int:
+    if isinstance(result, int):
+        return result
+    if isinstance(result, dict):
+        return int(result.get("code", -1))
+    if isinstance(result, list) and result:
+        return _code_of(result[0])
+    return -1
+
+
+async def _miot_set_prop_async(cfg: dict, did: str, siid: int, piid: int, value):
+    service = await _miio_service_async(cfg)
+    return _code_of(await service.miot_set_prop(str(did), (siid, piid), value))
+
+
+async def _miot_action_async(cfg: dict, did: str, siid: int, aiid: int, args):
+    service = await _miio_service_async(cfg)
+    return _code_of(await service.miot_action(str(did), (siid, aiid), list(args or [])))
 
 
 def _fmt_devices(devices) -> str:
@@ -557,7 +597,57 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 LAST_SPOKEN[category] = time.monotonic()
         type(self).last_result = dict(result, ts=time.strftime("%Y-%m-%d %H:%M:%S"))
         code = 200 if result.get("ok") else 500
+        if result.get("ok"):
+            self._run_post_actions(category)
         return self._write_json(code, result)
+
+    # ---------------- 播报后联动动作 ----------------
+    def _run_post_actions(self, category: str):
+        cfg_actions = self.cfg.get("post_actions") or {}
+        if not cfg_actions.get("enabled") or self.dry_run:
+            return
+        actions = cfg_actions.get(category) or []
+        for action in actions:
+            try:
+                threading.Thread(target=self._run_action, args=(dict(action),),
+                                 daemon=True).start()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("联动动作线程创建失败：%s", exc)
+
+    def _run_action(self, action: dict):
+        delay = float(action.get("delay_sec") or 0)
+        if delay > 0:
+            time.sleep(delay)
+        typ = (action.get("type") or "").strip()
+        try:
+            if typ == "miot_set_prop":
+                code = asyncio.run(_miot_set_prop_async(
+                    self.cfg, action["did"], int(action["siid"]), int(action["piid"]),
+                    action.get("value")))
+                ok = code == 0
+                log.info("联动动作 miot_set_prop did=%s siid=%s piid=%s value=%s -> code=%s",
+                         action.get("did"), action.get("siid"), action.get("piid"),
+                         action.get("value"), code)
+            elif typ == "miot_action":
+                code = asyncio.run(_miot_action_async(
+                    self.cfg, action["did"], int(action["siid"]), int(action["aiid"]),
+                    action.get("args") or []))
+                ok = code == 0
+                log.info("联动动作 miot_action did=%s siid=%s aiid=%s args=%s -> code=%s",
+                         action.get("did"), action.get("siid"), action.get("aiid"),
+                         action.get("args"), code)
+            elif typ == "http":
+                req = urllib.request.Request(action["url"], method=action.get("method", "GET"))
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    ok = 200 <= resp.status < 300
+                log.info("联动动作 http %s -> %s", action["url"], ok)
+            else:
+                log.warning("未知联动动作类型：%r", typ)
+                return
+            if not ok:
+                log.warning("联动动作失败：%s", action)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("联动动作异常（%s）：%s", typ, exc)
 
 
 def run_server(cfg: dict, dry_run: bool, host: str, port: int):

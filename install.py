@@ -40,6 +40,7 @@ FILES = [
     "tools/hc_config.py",
     "tools/verify.py",
     "tools/oneclick.py",
+    "tools/rack.py",
     "tools/fix_login.py",
     "examples/config.example.json",
     "examples/homeconnect.example.json",

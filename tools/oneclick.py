@@ -42,6 +42,7 @@ FILES = [
     ("tools/hc_announce.py", "tools/hc_announce.py"),
     ("tools/hc_config.py", "tools/hc_config.py"),
     ("tools/oneclick.py", "tools/oneclick.py"),
+    ("tools/rack.py", "tools/rack.py"),
 ]
 
 
@@ -358,6 +359,15 @@ def action_hc_reauth():
     print("建议再选 3 做一次完整自检。")
 
 
+def action_rack():
+    banner("晾衣架联动设置")
+    r = find("rack.py")
+    if not r:
+        print("❌ 找不到 rack.py，先选 9 更新本地工具")
+        return
+    run_script(r, timeout=1200)
+
+
 def action_update():
     banner("更新本地工具")
     n = update_tools()
@@ -390,9 +400,10 @@ def main():
         print("  8) 停止音箱播放")
         print("  9) 更新本地工具到最新")
         print(" 10) 晶御重新授权（方案 B）")
+        print(" 11) 晾衣架联动设置（播报后自动下降）")
         print("  0) 退出")
         try:
-            choice = input("输入 1-10 或 0：").strip()
+            choice = input("输入 1-11 或 0：").strip()
         except (EOFError, KeyboardInterrupt):
             print("\n退出。")
             return 0
@@ -417,11 +428,13 @@ def main():
                 action_update()
             elif choice == "10":
                 action_hc_reauth()
+            elif choice == "11":
+                action_rack()
             elif choice == "0":
                 print("再见。")
                 return 0
             else:
-                print("请输入 1-10 或 0。")
+                print("请输入 1-11 或 0。")
         except KeyboardInterrupt:
             print("\n已取消当前操作。")
         except Exception as exc:  # noqa: BLE001
