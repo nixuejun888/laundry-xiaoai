@@ -219,12 +219,13 @@ def login_with_retry(cfg, attempts=3):
 
 
 def restart_bridge():
-    fix = APP_DIR / "tools" / "fix.py"
-    if fix.exists():
+    candidates = [APP_DIR / "tools" / "fix.py", APP_DIR / "fix.py"]
+    fix = next((c for c in candidates if c.exists()), None)
+    if fix:
         print("\n⏳ 重启服务…")
         subprocess.run([sys.executable, str(fix)], check=False)
     else:
-        print("⚠️ 找不到 tools/fix.py，请手动重启 bridge")
+        print("⚠️ 找不到 fix.py，请手动重启 bridge")
 
 
 def test_speak():

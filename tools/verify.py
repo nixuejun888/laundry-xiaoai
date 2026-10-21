@@ -102,7 +102,10 @@ def main():
 
     # 方案 B：设备列表（会消耗 1 次 API 请求）
     try:
-        cp = subprocess.run([sys.executable, str(APP_DIR / "hc_listen.py"), "--list"],
+        hc = APP_DIR / "hc_listen.py"
+        if not hc.exists():
+            hc = APP_DIR / "tools" / "hc_listen.py"
+        cp = subprocess.run([sys.executable, str(hc), "--list"],
                             cwd=str(APP_DIR), capture_output=True, text=True, timeout=90)
         out = (cp.stdout or "") + (cp.stderr or "")
         found = [x for x in ("洗衣机", "干衣机", "Washer", "Dryer") if x in out]
