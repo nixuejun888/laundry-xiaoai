@@ -396,8 +396,11 @@ def action_test_rack():
                 print("bridge 返回：", r.read().decode("utf-8", "replace")[:300])
         except Exception as exc:
             print("❌ 请求失败：", exc)
+        print("等待联动和后续播报（约 10 秒）…")
+        time.sleep(10)
     else:
         run_script(b, ("--run-actions", "washer"), timeout=120)
+        time.sleep(6)
     print()
     print("看晾衣架是否下降；下面是对应日志：")
     try:
