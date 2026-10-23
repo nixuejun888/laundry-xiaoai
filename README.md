@@ -313,6 +313,24 @@ python ~/laundry-xiaoai/tools/rack.py   # 交互式向导：选设备 → 读 MI
 - 用 `followup_on_status` 等 `status=4` 再播报，比固定延迟准确；
 - 其他型号请先 `python tools/rack.py --spec <DID>` 查看真实规格再配置。
 
+## 9.6 token 守护（自动重登，避免“突然不播报”）
+
+小米服务令牌（`mi.token`）过期后，`miservice` 在请求 401 时会**主动删除 token 文件**并尝试用密码重登。如果 `config.json` 里没有保存密码，重登会失败，token 就永久丢失，之后所有播报都失效。
+
+bridge 内置了 token 守护：
+
+- 每 `token_check_sec` 秒（默认 1800 = 30 分钟）检查一次 `mi.token`；
+- 发现丢失且配置里保存了密码 → 非交互自动重登并重建 token；
+- 如果需要手机验证码（小米风控）→ 日志提示"需要验证码，请运行一键中心 → 2"，不会卡住。
+
+前提：`config.json` 里 `username` 和 `password` 都已保存（一键中心 → 2 登录时选择保存密码）。日志里会看到：
+
+```
+token 守护已启动：每 1800 秒检查一次
+检测到 mi.token 丢失，尝试用保存的密码自动重登…
+token 自动重登成功（设备数 1），mi.token 已重建
+```
+
 ## 10. 安全与隐私
 
 - 所有数据都在你手机本地：`~/.config/laundry-xiaoai/`（小米 token、晶御 token、配置）；文件权限 600；

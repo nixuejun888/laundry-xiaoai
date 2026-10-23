@@ -83,6 +83,9 @@ DEFAULT_CONFIG = {
     # 全局最小播报间隔（秒）：防止两个触发源同时到达时，第二条 TTS 打断正在播的第一句。
     # 0 = 关闭该保护。
     "min_gap_sec": 4,
+    # token 守护：每隔多少秒检查一次 mi.token 是否丢失；丢失就用保存的用户名/密码自动重登。
+    # 0 = 关闭。需要 config 里保存了密码才能自动重登。
+    "token_check_sec": 1800,
     # 免打扰时段：在这个时间段内不播报（适合半夜洗完的衣服）。
     # enabled=false 关闭；支持跨零点，例如 23:00 -> 07:30。
     "quiet_hours": {"enabled": False, "start": "23:00", "end": "07:30"},
@@ -274,6 +277,43 @@ async def _miot_action_async(cfg: dict, did: str, siid: int, aiid: int, args):
 async def _miot_get_prop_async(cfg: dict, did: str, siid: int, piid: int):
     service = await _miio_service_async(cfg)
     return await service.miot_get_prop(str(did), (siid, piid))
+
+
+async def _relogin_with_password_async(cfg: dict) -> int:
+    """用保存的账号密码非交互重登（遇到手机验证码会直接失败，不会卡住）。"""
+    from miservice import MiAccount, MiNAService
+
+    async def no_otp(method):
+        raise RuntimeError(f"需要{method}验证码，无法自动登录")
+
+    account = MiAccount(None, cfg.get("username") or "", cfg.get("password") or "",
+                        str(TOKEN_PATH), otp_callback=no_otp)
+    devices = await MiNAService(account).device_list()
+    return len(devices or [])
+
+
+def token_guard_loop(cfg: dict):
+    """后台巡检：mi.token 丢失时自动用保存的密码重登。"""
+    interval = float(cfg.get("token_check_sec") or 0)
+    if interval <= 0:
+        return
+    log.info("token 守护已启动：每 %d 秒检查一次", int(interval))
+    while True:
+        time.sleep(interval)
+        try:
+            if TOKEN_PATH.exists():
+                continue
+            if not (cfg.get("username") and cfg.get("password")):
+                log.warning("mi.token 丢失，但未保存密码，无法自动重登（运行一键中心 → 2）")
+                continue
+            log.warning("检测到 mi.token 丢失，尝试用保存的密码自动重登…")
+            n = asyncio.run(_relogin_with_password_async(cfg))
+            if TOKEN_PATH.exists():
+                log.info("token 自动重登成功（设备数 %s），mi.token 已重建", n)
+            else:
+                log.warning("重登完成但 token 文件仍未生成")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("token 自动重登失败：%s（可能需要手机验证码，请运行一键中心 → 2）", exc)
 
 
 def _fmt_devices(devices) -> str:
@@ -722,6 +762,8 @@ def run_server(cfg: dict, dry_run: bool, host: str, port: int):
     BridgeHandler.cfg = cfg
     BridgeHandler.dry_run = dry_run
     httpd = ThreadingHTTPServer((host, port), BridgeHandler)
+    if not dry_run:
+        threading.Thread(target=token_guard_loop, args=(cfg,), daemon=True).start()
     PID_PATH.write_text(str(os.getpid()), encoding="utf-8")
     log.info("服务已启动：http://%s:%s （dry_run=%s）", host, port, dry_run)
     log.info("健康检查：http://%s:%s/health", host, port)
