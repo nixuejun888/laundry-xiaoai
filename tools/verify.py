@@ -62,11 +62,18 @@ def main():
 
     # 方案 A：模拟一条微信通知
     try:
-        r = http_json(BRIDGE + "/notify", {
+        payload = {
             "text": "文件传输助手: 洗衣已完成，请及时晾晒",
             "package": "com.tencent.mm",
-        })
-        ok = bool(r.get("ok")) and (bool(r.get("spoken")) or r.get("skipped") in ("cooldown", "quiet-hours"))
+        }
+        r = http_json(BRIDGE + "/notify", payload)
+        # too-soon = 4 秒内刚播过（全局防打断），等一会儿再试一次
+        if r.get("skipped") == "too-soon":
+            print("   （4 秒内刚播过，等 5 秒后重试）")
+            time.sleep(5)
+            r = http_json(BRIDGE + "/notify", payload)
+        ok = bool(r.get("ok")) and (bool(r.get("spoken")) or r.get("skipped") in
+                                    ("cooldown", "quiet-hours", "too-soon"))
         record("方案A：模拟微信通知 → bridge", ok, json.dumps(r, ensure_ascii=False)[:180])
     except Exception as exc:  # noqa: BLE001
         record("方案A：模拟微信通知 → bridge", False, str(exc))
