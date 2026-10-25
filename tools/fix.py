@@ -117,6 +117,10 @@ def hc_configured():
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
     base = (os.environ.get("LAUNDRY_XIAOAI_BASE") or DEFAULT_BASE).rstrip("/")
+    MIRRORS = [
+        "https://ghfast.top/https://raw.githubusercontent.com/nixuejun888/laundry-xiaoai/main",
+        "https://gh-proxy.com/https://raw.githubusercontent.com/nixuejun888/laundry-xiaoai/main",
+    ]
     print("=" * 60)
     print("修复/更新脚本并重启服务")
     print("安装目录：", APP_DIR)
@@ -130,19 +134,31 @@ def main():
         print("   请先运行一键安装：python -c \"import urllib.request as u;exec(u.urlopen('%s/install.py').read().decode())\"" % base)
         return 1
 
-    # 1) 更新脚本
-    for rel, dest in FILES:
-        try:
-            data = urllib.request.urlopen(f"{base}/{rel}", timeout=30).read()
-            if len(data) < 500:
-                print(f"⚠️ {rel} 内容太小，跳过")
-                continue
-            target = APP_DIR / dest
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(data)
-            print(f"✅ 已更新 {dest}（{len(data)} bytes）")
-        except Exception as exc:  # noqa: BLE001
-            print(f"⚠️ 更新 {rel} 失败：{exc}")
+    # 1) 更新脚本（失败自动尝试国内镜像）
+    bases = [base]
+    if base.rstrip("/") == DEFAULT_BASE.rstrip("/"):
+        bases += MIRRORS
+    for try_base in bases:
+        if try_base != base:
+            print(f"⚠️ {base} 不可用，尝试镜像 {try_base.split('/')[2]} …")
+        ok_all = True
+        for rel, dest in FILES:
+            try:
+                data = urllib.request.urlopen(f"{try_base}/{rel}", timeout=30).read()
+                if len(data) < 500:
+                    print(f"⚠️ {rel} 内容太小，跳过")
+                    continue
+                target = APP_DIR / dest
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
+                print(f"✅ 已更新 {dest}（{len(data)} bytes）")
+            except Exception as exc:  # noqa: BLE001
+                print(f"⚠️ 更新 {rel} 失败：{exc}")
+                ok_all = False
+        if ok_all:
+            base = try_base
+            break
+
 
     # 2) 重新生成启动脚本
     (APP_DIR / "run-loop.sh").write_text(RUN_LOOP, encoding="utf-8")

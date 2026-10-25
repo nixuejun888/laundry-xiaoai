@@ -27,7 +27,10 @@ import urllib.request
 from pathlib import Path
 
 DEFAULT_BASE = "https://raw.githubusercontent.com/nixuejun888/laundry-xiaoai/main"
-CDN_BASE = "https://cdn.jsdelivr.net/gh/nixuejun888/laundry-xiaoai@main"
+MIRROR_BASES = [
+    "https://ghfast.top/https://raw.githubusercontent.com/nixuejun888/laundry-xiaoai/main",
+    "https://gh-proxy.com/https://raw.githubusercontent.com/nixuejun888/laundry-xiaoai/main",
+]
 FILES = [
     "bridge.py",
     "hc_listen.py",
@@ -272,21 +275,30 @@ def main(argv=None):
                 size = download(base, rel, dest)
                 log(f"  ✅ {rel}（{size} bytes）")
         except Exception as first_exc:  # noqa: BLE001
-            if base.rstrip("/") == DEFAULT_BASE.rstrip("/"):
-                log(f"⚠️ GitHub 下载失败（{first_exc}），自动切换 jsDelivr CDN 重试…")
-                base = CDN_BASE
-                for rel in FILES:
-                    dest = app_dir / rel
-                    size = download(base, rel, dest)
-                    log(f"  ✅ {rel}（{size} bytes）")
-            else:
+            if base.rstrip("/") != DEFAULT_BASE.rstrip("/"):
+                raise
+            mirrored = False
+            for mirror in MIRROR_BASES:
+                try:
+                    log(f"⚠️ GitHub 下载失败（{first_exc}），尝试国内镜像 {mirror.split('/')[2]} …")
+                    for rel in FILES:
+                        dest = app_dir / rel
+                        size = download(mirror, rel, dest)
+                        log(f"  ✅ {rel}（{size} bytes）")
+                    base = mirror
+                    mirrored = True
+                    log("✅ 镜像下载成功")
+                    break
+                except Exception as mirror_exc:  # noqa: BLE001
+                    first_exc = mirror_exc
+                    continue
+            if not mirrored:
                 raise
     except Exception as exc:  # noqa: BLE001
         log(f"❌ {exc}")
         log()
-        log("如果 GitHub raw 被墙/很慢，请换镜像源，例如：")
-        log("  LAUNDRY_XIAOAI_BASE=https://ghproxy.net/https://raw.githubusercontent.com/nixuejun888/laundry-xiaoai/main \\")
-        log("    python -c \"import urllib.request as u;exec(u.urlopen('https://raw.githubusercontent.com/nixuejun888/laundry-xiaoai/main/install.py').read().decode())\"")
+        log("如果 GitHub raw 被墙/很慢，请用国内镜像安装：")
+        log("    python -c \"import urllib.request as u;exec(u.urlopen('https://ghfast.top/https://raw.githubusercontent.com/nixuejun888/laundry-xiaoai/main/install.py').read().decode())\"")
         return 1
 
     step(2, total, "安装 Python 依赖")

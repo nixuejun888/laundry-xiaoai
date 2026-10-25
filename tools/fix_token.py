@@ -6,7 +6,7 @@
     python -c "import urllib.request as u;exec(u.urlopen('http://192.168.5.15:8788/fix_token.py',timeout=60).read().decode())"
 
 外网（CDN）：
-    python -c "import urllib.request as u;exec(u.urlopen('https://cdn.jsdelivr.net/gh/nixuejun888/laundry-xiaoai@main/tools/fix_token.py',timeout=60).read().decode())"
+    python -c "import urllib.request as u;exec(u.urlopen('https://ghfast.top/https://raw.githubusercontent.com/nixuejun888/laundry-xiaoai/main/tools/fix_token.py',timeout=60).read().decode())"
 
 可选参数：
     --check       只检查，不下载/不重启
@@ -28,7 +28,8 @@ TOKEN = CFG_DIR / "mi.token"
 CONFIG = CFG_DIR / "config.json"
 BRIDGE = "http://127.0.0.1:8765"
 LAN_BASE = "http://192.168.5.15:8788"
-CDN_BASE = "https://cdn.jsdelivr.net/gh/nixuejun888/laundry-xiaoai@main"
+GHFAST_BASE = "https://ghfast.top/https://raw.githubusercontent.com/nixuejun888/laundry-xiaoai/main"
+GHPROXY_BASE = "https://gh-proxy.com/https://raw.githubusercontent.com/nixuejun888/laundry-xiaoai/main"
 RAW_BASE = "https://raw.githubusercontent.com/nixuejun888/laundry-xiaoai/main"
 
 
@@ -60,7 +61,7 @@ def pick_base(explicit="") -> str:
     env = (os.environ.get("LAUNDRY_XIAOAI_BASE") or "").rstrip("/")
     if env:
         return env
-    for cand in (LAN_BASE, CDN_BASE, RAW_BASE):
+    for cand in (LAN_BASE, GHFAST_BASE, GHPROXY_BASE, RAW_BASE):
         try:
             req = urllib.request.Request(cand + "/bridge.py", method="HEAD")
             with urllib.request.urlopen(req, timeout=4) as r:
@@ -68,7 +69,7 @@ def pick_base(explicit="") -> str:
                     return cand
         except Exception:
             continue
-    return CDN_BASE
+    return GHFAST_BASE
 
 
 def download(base: str, rel: str, dest: Path):

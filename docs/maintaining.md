@@ -66,7 +66,7 @@ LAUNDRY_XIAOAI_BASE=http://192.168.5.15:8788 python ~/laundry-xiaoai/tools/fix.p
 外网（CDN）：
 
 ```bash
-LAUNDRY_XIAOAI_BASE=https://cdn.jsdelivr.net/gh/nixuejun888/laundry-xiaoai@main python ~/laundry-xiaoai/tools/fix.py
+LAUNDRY_XIAOAI_BASE=https://ghfast.top/https://raw.githubusercontent.com/nixuejun888/laundry-xiaoai/main python ~/laundry-xiaoai/tools/fix.py
 ```
 
 ## 5. 验收
