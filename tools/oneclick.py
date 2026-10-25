@@ -26,6 +26,7 @@ CFG_DIR = Path(os.environ.get("LAUNDRY_XIAOAI_HOME") or (HOME / ".config" / "lau
 BRIDGE = "http://127.0.0.1:8765"
 REPO_RAW = "https://raw.githubusercontent.com/nixuejun888/laundry-xiaoai/main"
 LAN_BASE = "http://192.168.5.15:8788"
+CDN_BASE = "https://cdn.jsdelivr.net/gh/nixuejun888/laundry-xiaoai@main"
 
 # 仓库文件 -> 本地相对路径
 FILES = [
@@ -100,7 +101,7 @@ def pick_base():
     env = (os.environ.get("LAUNDRY_XIAOAI_BASE") or "").rstrip("/")
     if env:
         return env
-    for cand in (LAN_BASE, REPO_RAW):
+    for cand in (LAN_BASE, CDN_BASE, REPO_RAW):
         try:
             req = urllib.request.Request(cand + "/bridge.py", method="HEAD")
             with urllib.request.urlopen(req, timeout=4) as r:

@@ -27,6 +27,7 @@ import urllib.request
 from pathlib import Path
 
 DEFAULT_BASE = "https://raw.githubusercontent.com/nixuejun888/laundry-xiaoai/main"
+CDN_BASE = "https://cdn.jsdelivr.net/gh/nixuejun888/laundry-xiaoai@main"
 FILES = [
     "bridge.py",
     "hc_listen.py",
@@ -264,10 +265,21 @@ def main(argv=None):
 
     step(1, total, "下载程序文件")
     try:
-        for rel in FILES:
-            dest = app_dir / rel
-            size = download(base, rel, dest)
-            log(f"  ✅ {rel}（{size} bytes）")
+        try:
+            for rel in FILES:
+                dest = app_dir / rel
+                size = download(base, rel, dest)
+                log(f"  ✅ {rel}（{size} bytes）")
+        except Exception as first_exc:  # noqa: BLE001
+            if base.rstrip("/") == DEFAULT_BASE.rstrip("/"):
+                log(f"⚠️ GitHub 下载失败（{first_exc}），自动切换 jsDelivr CDN 重试…")
+                base = CDN_BASE
+                for rel in FILES:
+                    dest = app_dir / rel
+                    size = download(base, rel, dest)
+                    log(f"  ✅ {rel}（{size} bytes）")
+            else:
+                raise
     except Exception as exc:  # noqa: BLE001
         log(f"❌ {exc}")
         log()
