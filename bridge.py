@@ -185,6 +185,20 @@ def load_config() -> dict:
     return cfg
 
 
+def _token_store():
+    """保留型 token 存储：miservice 想删 token 时拦截，避免 passToken 一起丢失。"""
+    from miservice.miaccount import MiTokenStore
+
+    class KeepTokenStore(MiTokenStore):
+        async def save_token(self, token=None):
+            if token is None:
+                log.info("已拦截 miservice 删除 mi.token（保留 passToken，便于免密续期）")
+                return
+            await super().save_token(token)
+
+    return KeepTokenStore(str(TOKEN_PATH))
+
+
 def _load_token_file():
     try:
         return json.loads(TOKEN_PATH.read_text(encoding="utf-8"))
@@ -292,7 +306,7 @@ async def _miio_service_async(cfg: dict):
     """用本机保存的小米账号构造 MiIOService（用于联动控制其他米家设备）。"""
     from miservice import MiAccount, MiIOService
     account = MiAccount(None, cfg.get("username") or "", cfg.get("password") or "",
-                        str(TOKEN_PATH))
+                        token_store=_token_store())
     return MiIOService(account)
 
 
@@ -330,7 +344,7 @@ async def _relogin_with_password_async(cfg: dict) -> int:
 
     _ensure_stable_device_id(cfg)
     account = MiAccount(None, cfg.get("username") or "", cfg.get("password") or "",
-                        str(TOKEN_PATH), otp_callback=no_otp)
+                        token_store=_token_store(), otp_callback=no_otp)
     devices = await MiNAService(account).device_list()
     return len(devices or [])
 
@@ -428,7 +442,7 @@ async def speak_async(text: str, cfg: dict, dry_run: bool = False) -> dict:
         None,
         cfg.get("username") or "",
         cfg.get("password") or "",
-        str(TOKEN_PATH),
+        token_store=_token_store(),
     )
     try:
         service = MiNAService(account)
@@ -506,7 +520,7 @@ async def login_async(cfg: dict, save_password: bool, only_list: bool = False) -
         return 2
 
     _ensure_stable_device_id(cfg)
-    account = MiAccount(None, username, password, str(TOKEN_PATH))
+    account = MiAccount(None, username, password, token_store=_token_store())
     service = MiNAService(account)
     try:
         devices = await service.device_list()
