@@ -342,7 +342,11 @@ token 自动重登成功（设备数 1），mi.token 已重建
 
 MIT License，见 [LICENSE](LICENSE)。
 
-## 12. 参考
+## 12. 维护与发布
+
+源码修改、同步到手机安装包、推送 GitHub 的固定流程见 [docs/maintaining.md](docs/maintaining.md)（一条命令：`bash sync-laundry.sh "提交说明"`）。
+
+## 13. 参考
 
 - MiService（小米云接口）：<https://github.com/Yonsm/MiService>
 - Home Connect 中国区 API 文档：<https://api-docs.home-connect.com/>
