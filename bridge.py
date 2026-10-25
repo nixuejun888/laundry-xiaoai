@@ -86,6 +86,9 @@ DEFAULT_CONFIG = {
     # token 守护：每隔多少秒检查一次 mi.token 是否丢失；丢失就用保存的用户名/密码自动重登。
     # 0 = 关闭。需要 config 里保存了密码才能自动重登。
     "token_check_sec": 1800,
+    # 固定设备标识：保存后，token 失效重登时会沿用同一个 deviceId，
+    # 避免小米把重登当成"新设备"而要求短信验证码。
+    "device_id": "",
     # 免打扰时段：在这个时间段内不播报（适合半夜洗完的衣服）。
     # enabled=false 关闭；支持跨零点，例如 23:00 -> 07:30。
     "quiet_hours": {"enabled": False, "start": "23:00", "end": "07:30"},
@@ -180,6 +183,45 @@ def load_config() -> dict:
     if not CONFIG_PATH.exists():
         save_config(cfg)
     return cfg
+
+
+def _load_token_file():
+    try:
+        return json.loads(TOKEN_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _ensure_stable_device_id(cfg: dict) -> str:
+    """token 文件不存在时，先用固定 deviceId 建一个占位 token，避免重登被当成新设备。"""
+    dev = str(cfg.get("device_id") or "").strip()
+    if not dev:
+        dev = str(_load_token_file().get("deviceId") or "").strip()
+    if not dev:
+        return ""
+    if not TOKEN_PATH.exists():
+        try:
+            TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+            TOKEN_PATH.write_text(json.dumps({"deviceId": dev}), encoding="utf-8")
+            TOKEN_PATH.chmod(0o600)
+            log.info("已用固定 deviceId 重建 mi.token 占位：%s…", dev[:8])
+        except Exception as exc:  # noqa: BLE001
+            log.warning("写入固定 deviceId 失败：%s", exc)
+    return dev
+
+
+def _remember_device_id(cfg: dict):
+    """把当前 token 里的 deviceId 记进配置，供以后重登复用。"""
+    dev = str(_load_token_file().get("deviceId") or "").strip()
+    if not dev:
+        return
+    if str(cfg.get("device_id") or "") != dev:
+        cfg["device_id"] = dev
+        try:
+            save_config(cfg)
+            log.info("已保存 deviceId 到配置（%s…），以后重登不会被视为新设备", dev[:8])
+        except Exception as exc:  # noqa: BLE001
+            log.warning("保存 deviceId 失败：%s", exc)
 
 
 def setup_logging(verbose: bool = False):
@@ -286,6 +328,7 @@ async def _relogin_with_password_async(cfg: dict) -> int:
     async def no_otp(method):
         raise RuntimeError(f"需要{method}验证码，无法自动登录")
 
+    _ensure_stable_device_id(cfg)
     account = MiAccount(None, cfg.get("username") or "", cfg.get("password") or "",
                         str(TOKEN_PATH), otp_callback=no_otp)
     devices = await MiNAService(account).device_list()
@@ -309,6 +352,7 @@ def token_guard_loop(cfg: dict):
             log.warning("检测到 mi.token 丢失，尝试用保存的密码自动重登…")
             n = asyncio.run(_relogin_with_password_async(cfg))
             if TOKEN_PATH.exists():
+                _remember_device_id(cfg)
                 log.info("token 自动重登成功（设备数 %s），mi.token 已重建", n)
             else:
                 log.warning("重登完成但 token 文件仍未生成")
@@ -379,6 +423,7 @@ async def speak_async(text: str, cfg: dict, dry_run: bool = False) -> dict:
     except Exception:
         return {"ok": False, "error": "未安装 miservice：请先执行 pip install miservice"}
 
+    _ensure_stable_device_id(cfg)
     account = MiAccount(
         None,
         cfg.get("username") or "",
@@ -460,6 +505,7 @@ async def login_async(cfg: dict, save_password: bool, only_list: bool = False) -
         print("缺少小米账号。")
         return 2
 
+    _ensure_stable_device_id(cfg)
     account = MiAccount(None, username, password, str(TOKEN_PATH))
     service = MiNAService(account)
     try:
@@ -761,6 +807,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
 def run_server(cfg: dict, dry_run: bool, host: str, port: int):
     BridgeHandler.cfg = cfg
     BridgeHandler.dry_run = dry_run
+    _ensure_stable_device_id(cfg)
+    _remember_device_id(cfg)
     httpd = ThreadingHTTPServer((host, port), BridgeHandler)
     if not dry_run:
         threading.Thread(target=token_guard_loop, args=(cfg,), daemon=True).start()
