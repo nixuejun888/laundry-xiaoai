@@ -43,6 +43,7 @@ FILES = [
     ("tools/hc_announce.py", "tools/hc_announce.py"),
     ("tools/hc_config.py", "tools/hc_config.py"),
     ("tools/oneclick.py", "tools/oneclick.py"),
+    ("tools/fix_token.py", "tools/fix_token.py"),
     ("tools/rack.py", "tools/rack.py"),
 ]
 
@@ -414,6 +415,15 @@ def action_test_rack():
     print("如果没反应：检查 DID/siid/piid 是否正确（选 11 重新配置或跑 rack.py --spec）。")
 
 
+def action_fix_token():
+    banner("小米 token 一键修复")
+    f = find("fix_token.py")
+    if not f:
+        print("❌ 找不到 fix_token.py，先选 9 更新本地工具")
+        return
+    run_script(f, timeout=600)
+
+
 def action_update():
     banner("更新本地工具")
     n = update_tools()
@@ -448,9 +458,10 @@ def main():
         print(" 10) 晶御重新授权（方案 B）")
         print(" 11) 晾衣架联动设置（播报后自动下降）")
         print(" 12) 测试晾衣架联动（不播报/完整）")
+        print(" 13) 小米 token 一键修复")
         print("  0) 退出")
         try:
-            choice = input("输入 1-12 或 0：").strip()
+            choice = input("输入 1-13 或 0：").strip()
         except (EOFError, KeyboardInterrupt):
             print("\n退出。")
             return 0
@@ -479,11 +490,13 @@ def main():
                 action_rack()
             elif choice == "12":
                 action_test_rack()
+            elif choice == "13":
+                action_fix_token()
             elif choice == "0":
                 print("再见。")
                 return 0
             else:
-                print("请输入 1-12 或 0。")
+                print("请输入 1-13 或 0。")
         except KeyboardInterrupt:
             print("\n已取消当前操作。")
         except Exception as exc:  # noqa: BLE001

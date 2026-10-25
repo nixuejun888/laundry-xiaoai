@@ -40,6 +40,7 @@ FILES = [
     ("tools/oneclick.py", "tools/oneclick.py"),
     ("tools/rack.py", "tools/rack.py"),
     ("tools/airer_diag.py", "tools/airer_diag.py"),
+    ("tools/fix_token.py", "tools/fix_token.py"),
     ("tools/fix_login.py", "tools/fix_login.py"),
 ]
 
