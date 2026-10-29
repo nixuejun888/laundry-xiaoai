@@ -240,14 +240,22 @@ class CloudAuth:
             {"params": {"did": str(did), "siid": 5, "aiid": 3, "in": [text]}},
         )
 
-    def set_prop(self, did: str, siid: int, piid: int, value) -> dict:
-        return self.request(
+    @staticmethod
+    def _first(items):
+        if isinstance(items, list):
+            return items[0] if items else {}
+        return items if isinstance(items, dict) else {}
+
+    def set_prop(self, did: str, siid: int, piid: int, value) -> int:
+        result = self.request(
             "/miotspec/prop/set",
             {"params": [{"did": str(did), "siid": int(siid), "piid": int(piid), "value": value}]},
         )
+        return int(self._first(result).get("code", 0))
 
-    def get_prop(self, did: str, siid: int, piid: int) -> dict:
-        return self.request(
+    def get_prop(self, did: str, siid: int, piid: int):
+        result = self.request(
             "/miotspec/prop/get",
             {"params": [{"did": str(did), "siid": int(siid), "piid": int(piid)}]},
         )
+        return self._first(result).get("value")
