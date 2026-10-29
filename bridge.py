@@ -210,6 +210,10 @@ def load_config() -> dict:
     cfg = deep_merge(DEFAULT_CONFIG, data)
     # 老配置里 listen_host 是 127.0.0.1：音箱无法拉取 /sounds，自动迁移为 0.0.0.0
     migrated = False
+    if cfg.get("prefer_sound"):
+        cfg["prefer_sound"] = False
+        migrated = True
+        log.info("已关闭 OH2 会循环的 mp3 播放通道（prefer_sound=False）")
     if str(cfg.get("listen_host") or "") in ("127.0.0.1", "localhost"):
         cfg["listen_host"] = "0.0.0.0"
         migrated = True
@@ -317,8 +321,20 @@ def cloud_auth(cfg: dict):
     try:
         from xcloud import CloudAuth
     except Exception as exc:  # noqa: BLE001
-        log.warning("xcloud 模块不可用：%s", exc)
-        return None
+        # 模块可能没随旧版 fix.py 下载：从镜像自取一次
+        url = str(cfg.get("cloud_module_url") or "http://192.168.5.15:8788/xcloud.py")
+        try:
+            data = urllib.request.urlopen(url, timeout=10).read()
+            if len(data) < 1000:
+                raise RuntimeError("内容太小")
+            (BASE_DIR / "xcloud.py").write_bytes(data)
+            import importlib
+            importlib.invalidate_caches()
+            from xcloud import CloudAuth  # noqa: F811
+            log.info("已自动下载并加载 xcloud 模块")
+        except Exception as exc2:  # noqa: BLE001
+            log.warning("xcloud 模块不可用：%s（自动下载也失败：%s）", exc, exc2)
+            return None
     path = CONFIG_DIR / str(cfg.get("cloud_auth_file") or "xiaomi_cloud.json")
     if not path.exists():
         url = str(cfg.get("cloud_auth_url") or "").strip()
@@ -582,6 +598,24 @@ def token_refresh_loop(cfg: dict):
                 log.warning("token 定时续期失败（可能需要重新登录，运行一键中心→2 或 fix_token.py）")
         except Exception as exc:  # noqa: BLE001
             log.warning("token 定时续期异常：%s", exc)
+
+
+def startup_stop_playback(cfg: dict):
+    """启动后主动停止音箱上可能残留的循环播放。"""
+    try:
+        async def _stop():
+            from miservice import MiNAService
+            account = _new_account(cfg.get("username") or "", cfg.get("password") or "")
+            service = MiNAService(account)
+            devices = await service.device_list()
+            for d in devices or []:
+                did = d.get("deviceID")
+                if did:
+                    await _stop_speaker(service, did)
+        asyncio.run(_stop())
+        log.info("已清理音箱残留播放")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("清理残留播放失败：%s", exc)
 
 
 def token_guard_loop(cfg: dict):
@@ -1156,6 +1190,7 @@ def run_server(cfg: dict, dry_run: bool, host: str, port: int):
         log.info("语音文件服务：http://%s:%s/sounds/（sound_base=%s）",
                  _local_ip() or "<本机IP>", port, cfg.get("sound_base") or "<自动>")
     if not dry_run:
+        threading.Thread(target=startup_stop_playback, args=(cfg,), daemon=True).start()
         threading.Thread(target=token_guard_loop, args=(cfg,), daemon=True).start()
         threading.Thread(target=token_refresh_loop, args=(cfg,), daemon=True).start()
     PID_PATH.write_text(str(os.getpid()), encoding="utf-8")
