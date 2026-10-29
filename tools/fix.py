@@ -42,7 +42,14 @@ FILES = [
     ("tools/airer_diag.py", "tools/airer_diag.py"),
     ("tools/fix_token.py", "tools/fix_token.py"),
     ("tools/miot_check.py", "tools/miot_check.py"),
+    ("tools/dlna_check.py", "tools/dlna_check.py"),
     ("tools/fix_login.py", "tools/fix_login.py"),
+    ("sounds/washer.mp3", "sounds/washer.mp3"),
+    ("sounds/dryer.mp3", "sounds/dryer.mp3"),
+    ("sounds/linger.mp3", "sounds/linger.mp3"),
+    ("sounds/supply.mp3", "sounds/supply.mp3"),
+    ("sounds/rack_ready.mp3", "sounds/rack_ready.mp3"),
+    ("sounds/generic.mp3", "sounds/generic.mp3"),
 ]
 
 RUN_LOOP = r'''#!/data/data/com.termux/files/usr/bin/bash

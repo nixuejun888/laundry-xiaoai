@@ -42,6 +42,7 @@ import copy
 import json
 import logging
 import os
+import socket
 import sys
 import threading
 import time
@@ -56,6 +57,8 @@ CONFIG_DIR = Path(os.environ.get("LAUNDRY_XIAOAI_HOME")
                   or (Path.home() / ".config" / APP_NAME))
 CONFIG_PATH = CONFIG_DIR / "config.json"
 TOKEN_PATH = CONFIG_DIR / "mi.token"
+BASE_DIR = Path(__file__).resolve().parent
+SOUNDS_DIR = BASE_DIR / "sounds"
 LOG_PATH = CONFIG_DIR / "bridge.log"
 PID_PATH = CONFIG_DIR / "bridge.pid"
 
@@ -75,7 +78,7 @@ DEFAULT_CONFIG = {
     # 手动指定 MIoT play-text 的 siid/aiid，例如 {"siid": 5, "aiid": 3}；一般不用填（auto 会按型号查表）
     "miot_tts": {},
     # Web 服务监听地址。只给手机本机用就保持 127.0.0.1。
-    "listen_host": "127.0.0.1",
+    "listen_host": "0.0.0.0",
     "listen_port": 8765,
     # 去抖：同一类别 N 秒内只播一次，防止微信通知重复/刷新导致复读。
     "cooldown_sec": 300,
@@ -89,8 +92,22 @@ DEFAULT_CONFIG = {
     # 固定设备标识：保存后，token 失效重登时会沿用同一个 deviceId，
     # 避免小米把重登当成"新设备"而要求短信验证码。
     "device_id": "",
-    # 定时续期：每隔多少秒用 passToken 主动刷新一次服务令牌（0=关闭，默认 6 小时）。
+    # 定时续期：每隔多少秒用 passToken 主动刷新一次服务令牌（0=关闭）。
     "token_refresh_sec": 43200,
+    # 本地语音播放：优先让音箱播放预生成的固定语音 mp3（通过 MiNA play_by_url），
+    # 失败才回退 MIoT/TTS。这样即使 MIoT 通道被限制也能播报。
+    "prefer_sound": True,
+    # 语音文件访问前缀。留空=本机局域网（http://手机IP:8765/sounds）；
+    # 也可以填公网前缀（如 https://ghfast.top/https://raw.githubusercontent.com/.../sounds）
+    "sound_base": "",
+    "sound_files": {
+        "washer": "washer.mp3",
+        "dryer": "dryer.mp3",
+        "linger": "linger.mp3",
+        "supply": "supply.mp3",
+        "rack_ready": "rack_ready.mp3",
+        "generic": "generic.mp3",
+    },
     # 免打扰时段：在这个时间段内不播报（适合半夜洗完的衣服）。
     # enabled=false 关闭；支持跨零点，例如 23:00 -> 07:30。
     "quiet_hours": {"enabled": False, "start": "23:00", "end": "07:30"},
@@ -275,6 +292,30 @@ def setup_logging(verbose: bool = False):
     except OSError:
         pass
     logging.getLogger("miservice").setLevel(logging.WARNING)
+
+
+def _local_ip() -> str:
+    try:
+        sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sk.connect(("223.5.5.5", 80))
+        ip = sk.getsockname()[0]
+        sk.close()
+        return ip if ip and not ip.startswith("127.") else ""
+    except Exception:
+        return ""
+
+
+def sound_url(cfg: dict, category: str) -> str:
+    name = (cfg.get("sound_files") or {}).get(category)
+    if not name:
+        return ""
+    base = str(cfg.get("sound_base") or "").rstrip("/")
+    if not base:
+        ip = _local_ip()
+        if not ip:
+            return ""
+        base = f"http://{ip}:{int(cfg.get('listen_port') or 8765)}/sounds"
+    return base + "/" + name
 
 
 def classify(text: str, cfg: dict):
@@ -493,7 +534,7 @@ def pick_tts_channel(cfg: dict, device: dict):
     return "mina", None
 
 
-async def speak_async(text: str, cfg: dict, dry_run: bool = False) -> dict:
+async def speak_async(text: str, cfg: dict, dry_run: bool = False, category: str = "") -> dict:
     if dry_run:
         log.info("[dry-run] 本应播报: %s", text)
         return {"ok": True, "dry_run": True, "spoken": text, "devices": ["dry-run"]}
@@ -541,6 +582,18 @@ async def speak_async(text: str, cfg: dict, dry_run: bool = False) -> dict:
                 if cfg.get("volume") is not None:
                     await service.player_set_volume(did, int(cfg["volume"]))
                 ok = False
+                # 优先播预生成的固定语音（MiNA play_by_url，不经过 MIoT/TTS）
+                if cfg.get("prefer_sound") and category:
+                    url = sound_url(cfg, category)
+                    if url:
+                        try:
+                            snd_ok = await service.play_by_url(did, url)
+                            log.info("播放语音文件 %s -> %s（%s）", category, snd_ok, url)
+                            if snd_ok:
+                                spoken.append(name)
+                                continue
+                        except Exception as exc:  # noqa: BLE001
+                            log.warning("播放语音文件失败，改用 MIoT/TTS：%s", exc)
                 if channel == "miot":
                     miot_did = str(d.get("miotDID") or "")
                     try:
@@ -694,6 +747,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
     def _route(self, method: str):
         parsed = urlparse(self.path)
+        client_ip = (self.client_address or ("",))[0]
+        if client_ip not in ("127.0.0.1", "::1") and not parsed.path.startswith("/sounds/"):
+            return self._write_json(403, {"ok": False, "error": "forbidden: local only"})
         path = parsed.path.rstrip("/") or "/"
         qs = parse_qs(parsed.query)
         text = (qs.get("text") or [""])[0]
@@ -751,6 +807,20 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 log.info("通知命中分类 %s，开始播报", cat)
                 return self._speak(cat, self.cfg["messages"].get(cat) or self.cfg["messages"]["generic"])
 
+            if path.startswith("/sounds/"):
+                name = path[len("/sounds/"):]
+                allowed = set((self.cfg.get("sound_files") or {}).values())
+                fp = SOUNDS_DIR / name
+                if name in allowed and fp.exists():
+                    data = fp.read_bytes()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "audio/mpeg")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
+                return self._write_json(404, {"ok": False, "error": "sound not found"})
+
             cat = path.lstrip("/")
             if cat in ("washer", "dryer", "linger", "supply", "generic"):
                 return self._speak(cat, self.cfg["messages"].get(cat) or self.cfg["messages"]["generic"])
@@ -790,7 +860,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
         # 串行化真正的 TTS 调用：两条播报命令重叠时，小爱往往只读到一半就被打断
         with SPEAK_EXEC_LOCK:
-            result = asyncio.run(speak_async(text, self.cfg, self.dry_run))
+            result = asyncio.run(speak_async(text, self.cfg, self.dry_run, category))
         result.update({"category": category, "text": text})
         if result.get("ok") and not bypass_cooldown:
             with LOCK:
@@ -988,7 +1058,7 @@ def main(argv=None) -> int:
         return asyncio.run(list_async(cfg))
     if args.test or args.test_text:
         text = args.test_text if args.test_text else cfg["messages"].get(args.test)
-        result = asyncio.run(speak_async(text, cfg, dry_run=False))
+        result = asyncio.run(speak_async(text, cfg, dry_run=False, category=(args.test or "")))
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result.get("ok") else 1
 
