@@ -313,6 +313,18 @@ python ~/laundry-xiaoai/tools/rack.py   # 交互式向导：选设备 → 读 MI
 - 用 `followup_on_status` 等 `status=4` 再播报，比固定延迟准确；
 - 其他型号请先 `python tools/rack.py --spec <DID>` 查看真实规格再配置。
 
+## 9.7 米家云扫码通道（推荐，最稳的播报方式）
+
+旧的小米开放接口可能被风控（`-127 client withdraw`）或播放循环。更稳的方式是用**米家 App 扫码授权**的云凭证（与 xgg cloud 同一协议，接口 `api.mijia.tech`）：
+
+1. 电脑上安装 Node + `npm i -g @eyaeya/xgg-cli`；
+2. 运行 `xgg cloud login --restart`，用米家 App 扫码确认；
+3. 把生成的 `auth.json` 复制到手机 `~/.config/laundry-xiaoai/xiaomi_cloud.json`（或放到局域网服务器由 bridge 自动下载）；
+4. 更新程序后 bridge 会自动使用该通道播报与控制设备，凭证过期时用 `passToken` 自动刷新；
+5. 若刷新失败（改密码/长期未用），重复第 2 步重新扫码即可。
+
+> 隐私提醒：`xiaomi_cloud.json` 等同于账号授权，不要提交到公开仓库（已在 `.gitignore` 排除）。
+
 ## 9.6 token 守护（自动重登，避免“突然不播报”）
 
 小米服务令牌（`mi.token`）过期后，`miservice` 在请求 401 时会**主动删除 token 文件**并尝试用密码重登。如果 `config.json` 里没有保存密码，重登会失败，token 就永久丢失，之后所有播报都失效。
