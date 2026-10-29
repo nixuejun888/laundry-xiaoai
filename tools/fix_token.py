@@ -115,7 +115,7 @@ def login_if_needed(cfg):
         print("✅ 账号密码和 passToken 都在，跳过登录")
         return True
     print("\n需要登录一次小米账号（会提示输入密码/验证码）…")
-    rc = subprocess.run([sys.executable, str(APP_DIR / "bridge.py"), "--login"],
+    rc = subprocess.run([sys.executable, str(APP_DIR / "bridge.py"), "--login", "--save-password"],
                         cwd=str(APP_DIR)).returncode
     return rc == 0
 

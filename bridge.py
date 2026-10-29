@@ -327,6 +327,10 @@ async def _miio_service_async(cfg: dict):
     """用本机保存的小米账号构造 MiIOService（用于联动控制其他米家设备）。"""
     from miservice import MiIOService
     account = _new_account(cfg.get("username") or "", cfg.get("password") or "")
+    try:
+        await account.login("xiaomiio")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("xiaomiio 会话登录失败：%s", exc)
     return MiIOService(account)
 
 
@@ -355,6 +359,16 @@ async def _miot_get_prop_async(cfg: dict, did: str, siid: int, piid: int):
     return await service.miot_get_prop(str(did), (siid, piid))
 
 
+async def _ensure_sessions(account) -> None:
+    """确保 micoapi（MiNA）和 xiaomiio（MIoT）两个服务会话都存在且刷新。"""
+    for sid in ("micoapi", "xiaomiio"):
+        try:
+            ok = await account.login(sid)
+            log.info("会话 %s：%s", sid, "已就绪" if ok else "登录失败")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("会话 %s 刷新失败：%s", sid, exc)
+
+
 async def _relogin_with_password_async(cfg: dict) -> int:
     """用保存的账号密码非交互重登（遇到手机验证码会直接失败，不会卡住）。"""
     from miservice import MiAccount, MiNAService
@@ -366,6 +380,10 @@ async def _relogin_with_password_async(cfg: dict) -> int:
     account = _new_account(cfg.get("username") or "", cfg.get("password") or "",
                            otp_callback=no_otp)
     devices = await MiNAService(account).device_list()
+    try:
+        await account.login("xiaomiio")
+    except Exception:
+        pass
     return len(devices or [])
 
 
@@ -385,7 +403,7 @@ def token_refresh_loop(cfg: dict):
 
             async def _refresh():
                 account = _new_account(cfg.get("username") or "", cfg.get("password") or "")
-                return await account.login("micoapi")
+                return await account.login("micoapi") and await account.login("xiaomiio")
 
             ok = asyncio.run(_refresh())
             if ok:
@@ -496,6 +514,7 @@ async def speak_async(text: str, cfg: dict, dry_run: bool = False) -> dict:
                 "error": "账号下没有找到小爱音箱（MiNA 设备为空）。请确认账号正确、"
                          "音箱已绑定米家，或运行 python bridge.py --list 查看。",
             }
+        await _ensure_sessions(account)
         targets = pick_targets(devices, cfg.get("speaker") or "")
         if not targets:
             return {
@@ -522,10 +541,21 @@ async def speak_async(text: str, cfg: dict, dry_run: bool = False) -> dict:
                         from miservice import MiIOService
                         miio = miio or MiIOService(account)
                         code = await miio.miot_action(miot_did, iid, [text])
+                        if code != 0:
+                            log.warning("MIoT 返回 code=%s，刷新 xiaomiio 会话后重试", code)
+                            await account.login("xiaomiio")
+                            code = await miio.miot_action(miot_did, iid, [text])
                         log.info("MIoT play-text %s siid=%s aiid=%s -> code=%s", name, iid[0], iid[1], code)
                         ok = (code == 0)
                     except Exception as exc:  # noqa: BLE001
-                        log.warning("MIoT 播报失败，回退 MiNA：%s", exc)
+                        log.warning("MIoT 播报失败，刷新会话后重试：%s", exc)
+                        try:
+                            await account.login("xiaomiio")
+                            code = await miio.miot_action(miot_did, iid, [text])
+                            log.info("重试 MIoT play-text -> code=%s", code)
+                            ok = (code == 0)
+                        except Exception as exc2:  # noqa: BLE001
+                            log.warning("MIoT 重试仍失败，回退 MiNA：%s", exc2)
                 if not ok:
                     ok = await service.text_to_speech(did, text)
                     if ok:
@@ -586,6 +616,12 @@ async def login_async(cfg: dict, save_password: bool, only_list: bool = False) -
     cfg["username"] = username
     cfg["password"] = password if save_password else ""
     save_config(cfg)
+    try:
+        await account.login("xiaomiio")
+        log.info("已为 MIoT 补登 xiaomiio 会话")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("MIoT 会话 xiaomiio 登录失败：%s", exc)
+
 
     print("\n登录成功，token 已保存到：", TOKEN_PATH)
     print("账号下的小爱设备：")
