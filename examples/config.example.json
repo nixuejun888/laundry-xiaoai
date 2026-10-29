@@ -11,7 +11,7 @@
   "cooldown_linger_sec": 1800,
   "min_gap_sec": 4,
   "token_check_sec": 1800,
-  "token_refresh_sec": 21600,
+  "token_refresh_sec": 43200,
   "device_id": "",
   "quiet_hours": {
     "enabled": false,

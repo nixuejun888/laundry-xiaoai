@@ -90,7 +90,7 @@ DEFAULT_CONFIG = {
     # 避免小米把重登当成"新设备"而要求短信验证码。
     "device_id": "",
     # 定时续期：每隔多少秒用 passToken 主动刷新一次服务令牌（0=关闭，默认 6 小时）。
-    "token_refresh_sec": 21600,
+    "token_refresh_sec": 43200,
     # 免打扰时段：在这个时间段内不播报（适合半夜洗完的衣服）。
     # enabled=false 关闭；支持跨零点，例如 23:00 -> 07:30。
     "quiet_hours": {"enabled": False, "start": "23:00", "end": "07:30"},
@@ -514,7 +514,13 @@ async def speak_async(text: str, cfg: dict, dry_run: bool = False) -> dict:
                 "error": "账号下没有找到小爱音箱（MiNA 设备为空）。请确认账号正确、"
                          "音箱已绑定米家，或运行 python bridge.py --list 查看。",
             }
-        await _ensure_sessions(account)
+        # 只在会话缺失时补登录，避免每次播报都登录触发小米风控
+        for _sid in ("micoapi", "xiaomiio"):
+            if not (account.token and _sid in account.token):
+                try:
+                    await account.login(_sid)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("补登录 %s 失败：%s", _sid, exc)
         targets = pick_targets(devices, cfg.get("speaker") or "")
         if not targets:
             return {
