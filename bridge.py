@@ -89,6 +89,8 @@ DEFAULT_CONFIG = {
     # 固定设备标识：保存后，token 失效重登时会沿用同一个 deviceId，
     # 避免小米把重登当成"新设备"而要求短信验证码。
     "device_id": "",
+    # 定时续期：每隔多少秒用 passToken 主动刷新一次服务令牌（0=关闭，默认 6 小时）。
+    "token_refresh_sec": 21600,
     # 免打扰时段：在这个时间段内不播报（适合半夜洗完的衣服）。
     # enabled=false 关闭；支持跨零点，例如 23:00 -> 07:30。
     "quiet_hours": {"enabled": False, "start": "23:00", "end": "07:30"},
@@ -185,8 +187,12 @@ def load_config() -> dict:
     return cfg
 
 
-def _token_store():
-    """保留型 token 存储：miservice 想删 token 时拦截，避免 passToken 一起丢失。"""
+def _new_account(username: str, password: str, otp_callback=None):
+    """构造 miservice 账号：
+    - 重登前先从 mi.token 重新加载 passToken/deviceId（不换随机设备、尽量免密）
+    - 拦截 miservice 删除 token 文件
+    """
+    from miservice import MiAccount
     from miservice.miaccount import MiTokenStore
 
     class KeepTokenStore(MiTokenStore):
@@ -196,7 +202,22 @@ def _token_store():
                 return
             await super().save_token(token)
 
-    return KeepTokenStore(str(TOKEN_PATH))
+    class ReloadingAccount(MiAccount):
+        async def login(self, sid: str) -> bool:
+            if not self.token and self.token_store:
+                try:
+                    self.token = await self.token_store.load_token()
+                    if self.token and self.token.get("passToken"):
+                        log.info("重登前已重新加载 mi.token 里的 passToken/deviceId（尝试免密续期）")
+                except Exception:
+                    self.token = None
+            return await super().login(sid)
+
+    store = KeepTokenStore(str(TOKEN_PATH))
+    if otp_callback is not None:
+        return ReloadingAccount(None, username, password, token_store=store,
+                                otp_callback=otp_callback)
+    return ReloadingAccount(None, username, password, token_store=store)
 
 
 def _load_token_file():
@@ -304,9 +325,8 @@ def _import_miservice():
 
 async def _miio_service_async(cfg: dict):
     """用本机保存的小米账号构造 MiIOService（用于联动控制其他米家设备）。"""
-    from miservice import MiAccount, MiIOService
-    account = MiAccount(None, cfg.get("username") or "", cfg.get("password") or "",
-                        token_store=_token_store())
+    from miservice import MiIOService
+    account = _new_account(cfg.get("username") or "", cfg.get("password") or "")
     return MiIOService(account)
 
 
@@ -343,10 +363,38 @@ async def _relogin_with_password_async(cfg: dict) -> int:
         raise RuntimeError(f"需要{method}验证码，无法自动登录")
 
     _ensure_stable_device_id(cfg)
-    account = MiAccount(None, cfg.get("username") or "", cfg.get("password") or "",
-                        token_store=_token_store(), otp_callback=no_otp)
+    account = _new_account(cfg.get("username") or "", cfg.get("password") or "",
+                           otp_callback=no_otp)
     devices = await MiNAService(account).device_list()
     return len(devices or [])
+
+
+def token_refresh_loop(cfg: dict):
+    """定时用 passToken 主动续期服务令牌，避免等到 401 才重登。"""
+    interval = float(cfg.get("token_refresh_sec") or 0)
+    if interval <= 0:
+        return
+    log.info("token 定时续期已启动：每 %d 秒刷新一次", int(interval))
+    while True:
+        time.sleep(interval)
+        try:
+            if not TOKEN_PATH.exists():
+                continue
+            if not (cfg.get("username") or cfg.get("password")):
+                continue
+
+            async def _refresh():
+                account = _new_account(cfg.get("username") or "", cfg.get("password") or "")
+                return await account.login("micoapi")
+
+            ok = asyncio.run(_refresh())
+            if ok:
+                _remember_device_id(cfg)
+                log.info("token 定时续期成功（服务令牌已刷新）")
+            else:
+                log.warning("token 定时续期失败（可能需要重新登录，运行一键中心→2 或 fix_token.py）")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("token 定时续期异常：%s", exc)
 
 
 def token_guard_loop(cfg: dict):
@@ -438,12 +486,7 @@ async def speak_async(text: str, cfg: dict, dry_run: bool = False) -> dict:
         return {"ok": False, "error": "未安装 miservice：请先执行 pip install miservice"}
 
     _ensure_stable_device_id(cfg)
-    account = MiAccount(
-        None,
-        cfg.get("username") or "",
-        cfg.get("password") or "",
-        token_store=_token_store(),
-    )
+    account = _new_account(cfg.get("username") or "", cfg.get("password") or "")
     try:
         service = MiNAService(account)
         devices = await service.device_list()
@@ -520,7 +563,7 @@ async def login_async(cfg: dict, save_password: bool, only_list: bool = False) -
         return 2
 
     _ensure_stable_device_id(cfg)
-    account = MiAccount(None, username, password, token_store=_token_store())
+    account = _new_account(username, password)
     service = MiNAService(account)
     try:
         devices = await service.device_list()
@@ -826,6 +869,7 @@ def run_server(cfg: dict, dry_run: bool, host: str, port: int):
     httpd = ThreadingHTTPServer((host, port), BridgeHandler)
     if not dry_run:
         threading.Thread(target=token_guard_loop, args=(cfg,), daemon=True).start()
+        threading.Thread(target=token_refresh_loop, args=(cfg,), daemon=True).start()
     PID_PATH.write_text(str(os.getpid()), encoding="utf-8")
     log.info("服务已启动：http://%s:%s （dry_run=%s）", host, port, dry_run)
     log.info("健康检查：http://%s:%s/health", host, port)
