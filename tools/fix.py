@@ -28,6 +28,7 @@ BOOT_DIR.mkdir(parents=True, exist_ok=True)
 # 需要同步的文件：仓库相对路径 -> 安装目录相对路径
 FILES = [
     ("bridge.py", "bridge.py"),
+    ("xcloud.py", "xcloud.py"),
     ("hc_listen.py", "hc_listen.py"),
     ("tools/diag.py", "tools/diag.py"),
     ("tools/showlog.py", "tools/showlog.py"),

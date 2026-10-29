@@ -94,12 +94,21 @@ DEFAULT_CONFIG = {
     "device_id": "",
     # 定时续期：每隔多少秒用 passToken 主动刷新一次服务令牌（0=关闭）。
     "token_refresh_sec": 43200,
-    # 本地语音播放：优先让音箱播放预生成的固定语音 mp3（通过 MiNA play_by_url），
-    # 失败才回退 MIoT/TTS。这样即使 MIoT 通道被限制也能播报。
-    "prefer_sound": True,
+    # 本地语音播放（实验性）：OH2 的 MiNA 音乐接口会循环播放且停不住，
+    # 默认关闭；确认可用后再打开。
+    "prefer_sound": False,
+    # 米家云（api.mijia.tech）扫码授权文件：优先用这条通道播报/控制（最稳）
+    "cloud_auth_file": "xiaomi_cloud.json",
+    "cloud_auth_url": "http://192.168.5.15:8788/xiaomi_cloud.json",
     # 语音文件访问前缀。留空=本机局域网（http://手机IP:8765/sounds）；
     # 也可以填公网前缀（如 https://ghfast.top/https://raw.githubusercontent.com/.../sounds）
     "sound_base": "",
+    # 语音镜像（优先使用，音箱已验证可从电脑拉取；电脑关了会自动回退本机）
+    "sound_mirror": "http://192.168.5.15:8788/sounds",
+    # 公网语音源（可选，如 ghfast 上的 sounds）
+    "sound_public": "https://ghfast.top/https://raw.githubusercontent.com/nixuejun888/laundry-xiaoai/main/sounds",
+    # 播放语音后延时停止（秒），避免 play_by_url 循环播放
+    "sound_stop_sec": 5.0,
     "sound_files": {
         "washer": "washer.mp3",
         "dryer": "dryer.mp3",
@@ -199,7 +208,13 @@ def load_config() -> dict:
             log.warning("配置文件解析失败(%s)，本次使用默认配置", exc)
             data = {}
     cfg = deep_merge(DEFAULT_CONFIG, data)
-    if not CONFIG_PATH.exists():
+    # 老配置里 listen_host 是 127.0.0.1：音箱无法拉取 /sounds，自动迁移为 0.0.0.0
+    migrated = False
+    if str(cfg.get("listen_host") or "") in ("127.0.0.1", "localhost"):
+        cfg["listen_host"] = "0.0.0.0"
+        migrated = True
+        log.info("已将 listen_host 迁移为 0.0.0.0（音箱需要从局域网拉取语音文件）")
+    if not CONFIG_PATH.exists() or migrated:
         save_config(cfg)
     return cfg
 
@@ -294,6 +309,43 @@ def setup_logging(verbose: bool = False):
     logging.getLogger("miservice").setLevel(logging.WARNING)
 
 
+_CLOUD_AUTH_CACHE = {"auth": None, "ts": 0.0}
+
+
+def cloud_auth(cfg: dict):
+    """加载米家云扫码授权文件；缺失时从局域网镜像自动下载一次。"""
+    try:
+        from xcloud import CloudAuth
+    except Exception as exc:  # noqa: BLE001
+        log.warning("xcloud 模块不可用：%s", exc)
+        return None
+    path = CONFIG_DIR / str(cfg.get("cloud_auth_file") or "xiaomi_cloud.json")
+    if not path.exists():
+        url = str(cfg.get("cloud_auth_url") or "").strip()
+        if not url:
+            return None
+        try:
+            data = urllib.request.urlopen(url, timeout=10).read()
+            if len(data) < 200:
+                raise RuntimeError("内容太小")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            path.chmod(0o600)
+            log.info("已从 %s 下载米家云授权文件", url)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("下载米家云授权文件失败：%s", exc)
+            return None
+    cached = _CLOUD_AUTH_CACHE.get("auth")
+    if cached is not None and cached.path == path:
+        return cached
+    auth = CloudAuth(path)
+    if not auth.ready:
+        log.warning("米家云授权文件不完整：%s", path)
+        return None
+    _CLOUD_AUTH_CACHE["auth"] = auth
+    return auth
+
+
 def _local_ip() -> str:
     try:
         sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -305,10 +357,74 @@ def _local_ip() -> str:
         return ""
 
 
+_SOUND_PROBE_CACHE = {"url": "", "ok": None, "ts": 0.0}
+
+
+def _probe_sound(base: str, name: str) -> bool:
+    """探测语音源是否可用（缓存 60 秒，避免每次播报都探测）。"""
+    import time as _t
+    url = base.rstrip("/") + "/" + name
+    now = _t.time()
+    if _SOUND_PROBE_CACHE["url"] == url and (now - float(_SOUND_PROBE_CACHE["ts"] or 0)) < 60:
+        return bool(_SOUND_PROBE_CACHE["ok"])
+    ok = False
+    try:
+        req = urllib.request.Request(url, method="HEAD")
+        with urllib.request.urlopen(req, timeout=2) as r:
+            ok = r.status == 200
+    except Exception:
+        ok = False
+    _SOUND_PROBE_CACHE.update({"url": url, "ok": ok, "ts": now})
+    return ok
+
+
+def ensure_sounds(cfg: dict) -> None:
+    """本机缺少语音文件时，从镜像/公网源补齐。"""
+    names = list((cfg.get("sound_files") or {}).values())
+    missing = [n for n in names if not (SOUNDS_DIR / n).exists()]
+    if not missing:
+        return
+    bases = [b for b in (cfg.get("sound_mirror"), cfg.get("sound_public"),
+                         f"http://{_local_ip()}:{int(cfg.get('listen_port') or 8765)}/sounds") if b]
+    for base in bases:
+        try:
+            for name in missing:
+                data = urllib.request.urlopen(base.rstrip("/") + "/" + name, timeout=10).read()
+                if len(data) < 500:
+                    raise RuntimeError("文件太小")
+                SOUNDS_DIR.mkdir(parents=True, exist_ok=True)
+                (SOUNDS_DIR / name).write_bytes(data)
+            log.info("已从 %s 补齐语音文件：%s", base, ", ".join(missing))
+            return
+        except Exception:
+            continue
+    log.warning("语音文件缺失且补不齐：%s（播报将回退 MIoT/TTS）", ", ".join(missing))
+
+
+async def _stop_speaker(service, did: str) -> bool:
+    """停止音箱播放：三种 media 都发一遍（OH2 音乐接口要靠 common/mico 才能停）。"""
+    ok = False
+    for media in ("app_ios", "common", "mico"):
+        try:
+            r = await service.ubus_request(did, "player_play_operation", "mediaplayer",
+                                           {"action": "stop", "media": media})
+            ok = ok or bool(r)
+        except Exception:
+            pass
+    try:
+        ok = ok or bool(await service.player_pause(did))
+    except Exception:
+        pass
+    return ok
+
+
 def sound_url(cfg: dict, category: str) -> str:
     name = (cfg.get("sound_files") or {}).get(category)
     if not name:
         return ""
+    mirror = str(cfg.get("sound_mirror") or "").rstrip("/")
+    if mirror and _probe_sound(mirror, name):
+        return mirror + "/" + name
     base = str(cfg.get("sound_base") or "").rstrip("/")
     if not base:
         ip = _local_ip()
@@ -386,6 +502,12 @@ def _code_of(result) -> int:
 
 
 async def _miot_set_prop_async(cfg: dict, did: str, siid: int, piid: int, value):
+    ca = cloud_auth(cfg)
+    if ca is not None:
+        try:
+            return await asyncio.to_thread(ca.set_prop, str(did), siid, piid, value)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("米家云 set_prop 失败，回退 MIoT：%s", exc)
     service = await _miio_service_async(cfg)
     return _code_of(await service.miot_set_prop(str(did), (siid, piid), value))
 
@@ -396,6 +518,12 @@ async def _miot_action_async(cfg: dict, did: str, siid: int, aiid: int, args):
 
 
 async def _miot_get_prop_async(cfg: dict, did: str, siid: int, piid: int):
+    ca = cloud_auth(cfg)
+    if ca is not None:
+        try:
+            return await asyncio.to_thread(ca.get_prop, str(did), siid, piid)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("米家云 get_prop 失败，回退 MIoT：%s", exc)
     service = await _miio_service_async(cfg)
     return await service.miot_get_prop(str(did), (siid, piid))
 
@@ -582,15 +710,50 @@ async def speak_async(text: str, cfg: dict, dry_run: bool = False, category: str
                 if cfg.get("volume") is not None:
                     await service.player_set_volume(did, int(cfg["volume"]))
                 ok = False
-                # 优先播预生成的固定语音（MiNA play_by_url，不经过 MIoT/TTS）
+                # 1) 米家云扫码通道（api.mijia.tech）：最稳，和米家 App 同等权限
+                _ca = cloud_auth(cfg)
+                if _ca is not None:
+                    try:
+                        _res = await asyncio.to_thread(_ca.speak, str(d.get("miotDID") or ""), text)
+                        _code = int((_res or {}).get("code", -1))
+                        if _code == 0:
+                            log.info("米家云播报成功：%s", name)
+                            spoken.append(name)
+                            continue
+                        log.warning("米家云播报 code=%s，尝试其他通道", _code)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("米家云播报失败：%s", exc)
+                # 2) 优先播预生成的固定语音（MiNA play_by_url，不经过 MIoT/TTS）
                 if cfg.get("prefer_sound") and category:
                     url = sound_url(cfg, category)
                     if url:
                         try:
+                            try:
+                                # 0=single(单曲循环) 1=list(顺序) 2=random，必须用 1
+                                await service.player_set_loop(did, 1)
+                            except Exception:
+                                pass
                             snd_ok = await service.play_by_url(did, url)
                             log.info("播放语音文件 %s -> %s（%s）", category, snd_ok, url)
                             if snd_ok:
                                 spoken.append(name)
+                                try:
+                                    name_f = (cfg.get("sound_files") or {}).get(category) or ""
+                                    fp = SOUNDS_DIR / name_f
+                                    if fp.exists():
+                                        # 48kbps 单声道：字节数*8/48000 ≈ 秒数
+                                        wait = fp.stat().st_size * 8 / 48000 + 0.4
+                                    else:
+                                        wait = float(cfg.get("sound_stop_sec") or 5)
+                                    await asyncio.sleep(wait)
+                                    # 音乐接口会循环，需要多 media 反复停止
+                                    for _try in range(4):
+                                        ok_stop = await _stop_speaker(service, did)
+                                        log.info("停止语音播放（第 %d 次）：%s", _try + 1, ok_stop)
+                                        await asyncio.sleep(1.2)
+                                    log.info("已停止语音播放（防止循环）")
+                                except Exception as exc:  # noqa: BLE001
+                                    log.warning("停止语音播放失败：%s", exc)
                                 continue
                         except Exception as exc:  # noqa: BLE001
                             log.warning("播放语音文件失败，改用 MIoT/TTS：%s", exc)
@@ -986,7 +1149,12 @@ def run_server(cfg: dict, dry_run: bool, host: str, port: int):
     BridgeHandler.dry_run = dry_run
     _ensure_stable_device_id(cfg)
     _remember_device_id(cfg)
+    if cfg.get("prefer_sound"):
+        ensure_sounds(cfg)
     httpd = ThreadingHTTPServer((host, port), BridgeHandler)
+    if cfg.get("prefer_sound"):
+        log.info("语音文件服务：http://%s:%s/sounds/（sound_base=%s）",
+                 _local_ip() or "<本机IP>", port, cfg.get("sound_base") or "<自动>")
     if not dry_run:
         threading.Thread(target=token_guard_loop, args=(cfg,), daemon=True).start()
         threading.Thread(target=token_refresh_loop, args=(cfg,), daemon=True).start()

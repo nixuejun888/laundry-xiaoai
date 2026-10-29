@@ -13,3 +13,4 @@ hc_listen.out
 *.pid
 .sh_history
 .DS_Store
+xiaomi_cloud.json

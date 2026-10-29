@@ -33,6 +33,7 @@ MIRROR_BASES = [
 ]
 FILES = [
     "bridge.py",
+    "xcloud.py",
     "hc_listen.py",
     "tools/fix.py",
     "tools/diag.py",
