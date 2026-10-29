@@ -316,6 +316,23 @@ def setup_logging(verbose: bool = False):
 _CLOUD_AUTH_CACHE = {"auth": None, "ts": 0.0}
 
 
+def refresh_cloud_module(cfg: dict) -> None:
+    """启动时从镜像刷新 xcloud.py，避免旧版协议文件导致返回值解析错误。"""
+    url = str(cfg.get("cloud_module_url") or "http://192.168.5.15:8788/xcloud.py")
+    try:
+        data = urllib.request.urlopen(url, timeout=10).read()
+        if len(data) < 1000:
+            raise RuntimeError("内容太小")
+        target = BASE_DIR / "xcloud.py"
+        if not target.exists() or target.read_bytes() != data:
+            target.write_bytes(data)
+            import importlib
+            importlib.invalidate_caches()
+            log.info("已刷新 xcloud 云协议模块（%d bytes）", len(data))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("刷新 xcloud 模块失败（继续用本地版本）：%s", exc)
+
+
 def cloud_auth(cfg: dict):
     """加载米家云扫码授权文件；缺失时从局域网镜像自动下载一次。"""
     try:
@@ -521,7 +538,8 @@ async def _miot_set_prop_async(cfg: dict, did: str, siid: int, piid: int, value)
     ca = cloud_auth(cfg)
     if ca is not None:
         try:
-            return await asyncio.to_thread(ca.set_prop, str(did), siid, piid, value)
+            result = await asyncio.to_thread(ca.set_prop, str(did), siid, piid, value)
+            return _code_of(result)
         except Exception as exc:  # noqa: BLE001
             log.warning("米家云 set_prop 失败，回退 MIoT：%s", exc)
     service = await _miio_service_async(cfg)
@@ -537,7 +555,12 @@ async def _miot_get_prop_async(cfg: dict, did: str, siid: int, piid: int):
     ca = cloud_auth(cfg)
     if ca is not None:
         try:
-            return await asyncio.to_thread(ca.get_prop, str(did), siid, piid)
+            result = await asyncio.to_thread(ca.get_prop, str(did), siid, piid)
+            if isinstance(result, list):
+                result = result[0] if result else None
+            if isinstance(result, dict):
+                result = result.get("value")
+            return result
         except Exception as exc:  # noqa: BLE001
             log.warning("米家云 get_prop 失败，回退 MIoT：%s", exc)
     service = await _miio_service_async(cfg)
@@ -1183,6 +1206,7 @@ def run_server(cfg: dict, dry_run: bool, host: str, port: int):
     BridgeHandler.dry_run = dry_run
     _ensure_stable_device_id(cfg)
     _remember_device_id(cfg)
+    refresh_cloud_module(cfg)
     if cfg.get("prefer_sound"):
         ensure_sounds(cfg)
     httpd = ThreadingHTTPServer((host, port), BridgeHandler)
