@@ -49,6 +49,7 @@ FILES = [
     ("tools/hc_config.py", "tools/hc_config.py"),
     ("tools/oneclick.py", "tools/oneclick.py"),
     ("tools/fix_token.py", "tools/fix_token.py"),
+    ("tools/miot_check.py", "tools/miot_check.py"),
     ("tools/rack.py", "tools/rack.py"),
 ]
 
@@ -429,6 +430,15 @@ def action_fix_token():
     run_script(f, timeout=600)
 
 
+def action_miot_check():
+    banner("MIoT 通道诊断（-127 client withdraw）")
+    f = find("miot_check.py")
+    if not f:
+        print("❌ 找不到 miot_check.py，先选 9 更新本地工具")
+        return
+    run_script(f, timeout=600)
+
+
 def action_update():
     banner("更新本地工具")
     n = update_tools()
@@ -470,9 +480,10 @@ def main():
         print(" 11) 晾衣架联动设置（播报后自动下降）")
         print(" 12) 测试晾衣架联动（不播报/完整）")
         print(" 13) 小米 token 一键修复")
+        print(" 14) MIoT 通道诊断（没声音时用）")
         print("  0) 退出")
         try:
-            choice = input("输入 1-13 或 0：").strip()
+            choice = input("输入 1-14 或 0：").strip()
         except (EOFError, KeyboardInterrupt):
             print("\n退出。")
             return 0
@@ -503,11 +514,13 @@ def main():
                 action_test_rack()
             elif choice == "13":
                 action_fix_token()
+            elif choice == "14":
+                action_miot_check()
             elif choice == "0":
                 print("再见。")
                 return 0
             else:
-                print("请输入 1-13 或 0。")
+                print("请输入 1-14 或 0。")
         except KeyboardInterrupt:
             print("\n已取消当前操作。")
         except Exception as exc:  # noqa: BLE001
