@@ -504,7 +504,7 @@ async def speak_async(text: str, cfg: dict, dry_run: bool = False) -> dict:
                          f"账号下设备：\n{_fmt_devices(devices)}",
             }
 
-        spoken, failed = [], []
+        spoken, failed, warnings = [], [], []
         channels = {}
         miio = None
         for d in targets:
@@ -528,12 +528,20 @@ async def speak_async(text: str, cfg: dict, dry_run: bool = False) -> dict:
                         log.warning("MIoT 播报失败，回退 MiNA：%s", exc)
                 if not ok:
                     ok = await service.text_to_speech(did, text)
+                    if ok:
+                        hw = str(d.get("hardware") or "").upper()
+                        if "OH2" in hw:
+                            warnings.append(f"{name}: MIoT 失败后回退 MiNA，OH2 型号通常无声")
+                            log.warning("MIoT 失败后回退 MiNA（%s），OH2 型号通常无声，实际可能没播报", name)
                 (spoken if ok else failed).append(name)
             except Exception as exc:
                 log.exception("播报失败 %s: %s", name, exc)
                 failed.append(name)
 
         result = {"ok": bool(spoken), "spoken": spoken, "failed": failed, "channels": channels}
+        if warnings:
+            result["warnings"] = warnings
+            result["warning"] = "；".join(warnings)
         if failed and not spoken:
             result["error"] = "所有音箱播报失败，详见日志"
         return result
