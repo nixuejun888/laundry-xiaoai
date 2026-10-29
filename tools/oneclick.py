@@ -5,12 +5,16 @@
 用法（Termux）：
     python ~/laundry-xiaoai/tools/oneclick.py
 
+一键全自动（无需选菜单）：
+    python ~/laundry-xiaoai/tools/oneclick.py --auto
+
 也可以直接远程运行（无需本地文件）：
     python -c "import urllib.request as u;exec(u.urlopen('http://192.168.5.15:8788/oneclick.py',timeout=60).read().decode())"
 
 菜单覆盖：一键体检+自动修复 / 修小米登录 / 双方案自检 / 重启服务 / 测试播报 /
 切换播报模式 / 看日志 / 停止播放 / 更新本地工具。
 """
+import argparse
 import json
 import os
 import subprocess
@@ -433,6 +437,12 @@ def action_update():
 
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
+    parser = argparse.ArgumentParser(description="小爱洗衣提醒一键中心")
+    parser.add_argument("--auto", action="store_true", help="全自动：更新工具→修复服务→必要时登录→测试→自检")
+    parser.add_argument("--base", default="", help="更新源（可选）")
+    args, _unknown = parser.parse_known_args()
+    if args.base:
+        os.environ["LAUNDRY_XIAOAI_BASE"] = args.base
     print("=" * 62)
     print("小爱洗衣提醒 · 一键中心")
     print("=" * 62)
