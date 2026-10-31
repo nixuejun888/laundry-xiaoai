@@ -100,6 +100,7 @@ DEFAULT_CONFIG = {
     # 米家云（api.mijia.tech）扫码授权文件：优先用这条通道播报/控制（最稳）
     "cloud_auth_file": "xiaomi_cloud.json",
     "cloud_auth_url": "http://192.168.5.15:8788/xiaomi_cloud.json",
+    "watchdog_installed": False,
     # 语音文件访问前缀。留空=本机局域网（http://手机IP:8765/sounds）；
     # 也可以填公网前缀（如 https://ghfast.top/https://raw.githubusercontent.com/.../sounds）
     "sound_base": "",
@@ -221,6 +222,63 @@ def load_config() -> dict:
     if not CONFIG_PATH.exists() or migrated:
         save_config(cfg)
     return cfg
+
+
+WATCHDOG_SH = r'''#!/data/data/com.termux/files/usr/bin/bash
+# 看门狗：bridge / 晶御监听 掉线就拉起来。由 termux-job-scheduler 定时调用。
+termux-wake-lock 2>/dev/null
+APP="$HOME/laundry-xiaoai"
+CFG="$HOME/.config/laundry-xiaoai"
+mkdir -p "$CFG"
+
+alive() {
+  p="$(cat "$1" 2>/dev/null)"
+  [ -n "$p" ] && [ -r "/proc/$p/cmdline" ] && grep -q "$2" "/proc/$p/cmdline" 2>/dev/null
+}
+
+cd "$APP" || exit 0
+
+if ! alive "$CFG/supervisor.pid" "run-loop.sh"; then
+  nohup bash "$APP/run-loop.sh" >> "$CFG/bridge.out" 2>&1 &
+  echo "watchdog: 重启 bridge 守护" >> "$CFG/watchdog.log"
+fi
+
+if [ -f "$CFG/homeconnect.json" ] && ! alive "$CFG/hc_loop.pid" "hc-loop.sh"; then
+  nohup bash "$APP/hc-loop.sh" >> "$CFG/hc_listen.out" 2>&1 &
+  echo "watchdog: 重启晶御监听" >> "$CFG/watchdog.log"
+fi
+'''
+
+
+def ensure_watchdog(cfg: dict) -> None:
+    """安装看门狗脚本；装了 Termux:API 就注册系统级 JobScheduler。"""
+    if cfg.get("watchdog_installed"):
+        return
+    try:
+        path = BASE_DIR / "watchdog.sh"
+        path.write_text(WATCHDOG_SH, encoding="utf-8")
+        os.chmod(path, 0o755)
+        log.info("已写入看门狗：%s", path)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("写看门狗失败：%s", exc)
+        return
+    import shutil as _shutil
+    js = _shutil.which("termux-job-scheduler")
+    if js:
+        try:
+            subprocess.run([js, "-s", str(path), "--period-ms", "900000",
+                            "--persisted", "true"],
+                           capture_output=True, timeout=20, check=False)
+            log.info("已注册系统级看门狗（每 15 分钟检查 bridge/晶御）")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("注册系统看门狗失败：%s", exc)
+    else:
+        log.info("未安装 Termux:API，暂用 run-loop + 开机自启；装 Termux:API 后重启即可启用系统级自愈")
+    cfg["watchdog_installed"] = True
+    try:
+        save_config(cfg)
+    except Exception:
+        pass
 
 
 def _new_account(username: str, password: str, otp_callback=None):
@@ -1206,6 +1264,10 @@ def run_server(cfg: dict, dry_run: bool, host: str, port: int):
     BridgeHandler.dry_run = dry_run
     _ensure_stable_device_id(cfg)
     _remember_device_id(cfg)
+    try:
+        ensure_watchdog(cfg)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("安装看门狗失败：%s", exc)
     refresh_cloud_module(cfg)
     if cfg.get("prefer_sound"):
         ensure_sounds(cfg)
