@@ -82,6 +82,34 @@ while true; do
 done
 '''
 
+WATCHDOG = r'''#!/data/data/com.termux/files/usr/bin/bash
+# 看门狗：bridge / 晶御监听 掉线就拉起来。由 termux-job-scheduler 每 15 分钟调用。
+termux-wake-lock 2>/dev/null
+APP="$HOME/laundry-xiaoai"
+CFG="$HOME/.config/laundry-xiaoai"
+mkdir -p "$CFG"
+
+alive() {
+  p="$(cat "$1" 2>/dev/null)"
+  [ -n "$p" ] && [ -r "/proc/$p/cmdline" ] && grep -q "$2" "/proc/$p/cmdline" 2>/dev/null
+}
+
+cd "$APP" || exit 0
+
+# bridge 守护
+if ! alive "$CFG/supervisor.pid" "run-loop.sh"; then
+  nohup bash "$APP/run-loop.sh" >> "$CFG/bridge.out" 2>&1 &
+  echo "watchdog: 重启 bridge 守护" >> "$CFG/watchdog.log"
+fi
+
+# 晶御监听守护
+if [ -f "$CFG/homeconnect.json" ] && ! alive "$CFG/hc_loop.pid" "hc-loop.sh"; then
+  nohup bash "$APP/hc-loop.sh" >> "$CFG/hc_listen.out" 2>&1 &
+  echo "watchdog: 重启晶御监听" >> "$CFG/watchdog.log"
+fi
+'''
+
+
 BOOT_BASE = r'''#!/data/data/com.termux/files/usr/bin/bash
 # 小爱洗衣提醒：开机自启 bridge 守护循环（以及可选的晶御官方 API 监听）
 SUP="$HOME/.config/laundry-xiaoai/supervisor.pid"
@@ -121,6 +149,26 @@ def hc_configured():
         return bool(cfg.get("client_id"))
     except Exception:
         return False
+
+
+def install_watchdog():
+    """写看门狗脚本，并尝试注册到 Android 系统级 JobScheduler（需 Termux:API）。"""
+    path = APP_DIR / "watchdog.sh"
+    path.write_text(WATCHDOG, encoding="utf-8")
+    os.chmod(path, 0o755)
+    print("✅ 已写入看门狗：", path)
+    if shutil.which("termux-job-scheduler"):
+        try:
+            subprocess.run(
+                ["termux-job-scheduler", "-s", str(path),
+                 "--period-ms", "900000", "--persisted", "true"],
+                capture_output=True, timeout=20, check=False,
+            )
+            print("✅ 已注册系统级看门狗（每 15 分钟检查一次）")
+        except Exception as exc:  # noqa: BLE001
+            print("⚠️ 注册系统看门狗失败：", exc)
+    else:
+        print("ℹ️ 未安装 Termux:API，暂用开机自启；装 Termux:API 后可再跑 fix.py 启用系统级自愈")
 
 
 def main():
