@@ -100,6 +100,7 @@ DEFAULT_CONFIG = {
     # 米家云（api.mijia.tech）扫码授权文件：优先用这条通道播报/控制（最稳）
     "cloud_auth_file": "xiaomi_cloud.json",
     "cloud_auth_url": "http://192.168.5.15:8788/xiaomi_cloud.json",
+    "speaker_miot_did": "",
     "watchdog_installed": False,
     # 语音文件访问前缀。留空=本机局域网（http://手机IP:8765/sounds）；
     # 也可以填公网前缀（如 https://ghfast.top/https://raw.githubusercontent.com/.../sounds）
@@ -777,7 +778,7 @@ def pick_tts_channel(cfg: dict, device: dict):
     return "mina", None
 
 
-async def speak_async(text: str, cfg: dict, dry_run: bool = False, category: str = "") -> dict:
+async def _speak_inner(text: str, cfg: dict, dry_run: bool = False, category: str = "") -> dict:
     if dry_run:
         log.info("[dry-run] 本应播报: %s", text)
         return {"ok": True, "dry_run": True, "spoken": text, "devices": ["dry-run"]}
@@ -789,15 +790,41 @@ async def speak_async(text: str, cfg: dict, dry_run: bool = False, category: str
 
     _ensure_stable_device_id(cfg)
     account = _new_account(cfg.get("username") or "", cfg.get("password") or "")
+    _ca = cloud_auth(cfg)
     try:
         service = MiNAService(account)
         devices = await service.device_list()
-        if not devices:
-            return {
-                "ok": False,
-                "error": "账号下没有找到小爱音箱（MiNA 设备为空）。请确认账号正确、"
-                         "音箱已绑定米家，或运行 python bridge.py --list 查看。",
-            }
+    except Exception as exc:  # noqa: BLE001
+        log.warning("MiNA 设备列表失败：%s", exc)
+        devices = []
+
+    if not devices:
+        # MiNA token 失效时，改用米家云扫码通道直接播报（不依赖 MiNA）
+        if _ca is not None:
+            try:
+                did = str(cfg.get("speaker_miot_did") or "")
+                sp_name = str(cfg.get("speaker") or "小爱音箱")
+                if not did:
+                    sp = await asyncio.to_thread(_ca.find_speaker)
+                    did = str((sp or {}).get("did") or "")
+                    sp_name = (sp or {}).get("name") or sp_name
+                    if did:
+                        cfg["speaker_miot_did"] = did
+                        try:
+                            save_config(cfg)
+                        except Exception:
+                            pass
+                if did:
+                    await asyncio.to_thread(_ca.speak, did, text)
+                    log.info("MiNA 不可用，已通过米家云直接播报：%s（%s）", sp_name, did)
+                    return {"ok": True, "spoken": [sp_name], "channels": {sp_name: "cloud"}}
+            except Exception as exc:  # noqa: BLE001
+                log.warning("米家云直连播报失败：%s", exc)
+        return {
+            "ok": False,
+            "error": "账号下没有找到小爱音箱（MiNA 设备为空且米家云不可用）。"
+                     "请确认小米登录状态，或运行 python bridge.py --list 查看。",
+        }
         # 只在会话缺失时补登录，避免每次播报都登录触发小米风控
         for _sid in ("micoapi", "xiaomiio"):
             if not (account.token and _sid in account.token):
@@ -813,6 +840,13 @@ async def speak_async(text: str, cfg: dict, dry_run: bool = False, category: str
                          f"账号下设备：\n{_fmt_devices(devices)}",
             }
 
+        try:
+            _first_did = str(targets[0].get("miotDID") or "")
+            if _first_did and str(cfg.get("speaker_miot_did") or "") != _first_did:
+                cfg["speaker_miot_did"] = _first_did
+                save_config(cfg)
+        except Exception:
+            pass
         spoken, failed, warnings = [], [], []
         channels = {}
         miio = None
@@ -912,12 +946,18 @@ async def speak_async(text: str, cfg: dict, dry_run: bool = False, category: str
         if failed and not spoken:
             result["error"] = "所有音箱播报失败，详见日志"
         return result
-    except Exception as exc:
+
+
+async def speak_async(text: str, cfg: dict, dry_run: bool = False, category: str = "") -> dict:
+    """外层包装：统一捕获异常并给出提示。"""
+    try:
+        return await _speak_inner(text, cfg, dry_run, category)
+    except Exception as exc:  # noqa: BLE001
         msg = str(exc)
         hint = ""
         low = msg.lower()
         if any(k in low for k in ("login", "auth", "401", "token")):
-            hint = "（登录可能失效：在 Termux 里运行 python bridge.py --login 重新登录）"
+            hint = "（登录可能失效：可运行一键中心 → 2 重新登录）"
         log.exception("调用小米云失败: %s", exc)
         return {"ok": False, "error": msg + hint}
 

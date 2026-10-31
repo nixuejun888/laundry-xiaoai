@@ -233,6 +233,44 @@ class CloudAuth:
         d.update({k: v for k, v in cookies.items() if v})
         self.save()
 
+    # ------------------------- 设备列表 ------------------------- #
+    def homes(self) -> list:
+        result = self.request(
+            "/v2/homeroom/gethome_merged",
+            {"fg": True, "fetch_share": True, "fetch_share_dev": True,
+             "fetch_cariot": True, "limit": 300, "app_ver": 7, "plat_form": 0},
+        )
+        return (result or {}).get("homelist") or []
+
+    def devices(self) -> list:
+        devices = []
+        for home in self.homes():
+            cursor = ""
+            for _ in range(20):
+                result = self.request(
+                    "/home/home_device_list",
+                    {"home_owner": home.get("uid"), "home_id": int(home.get("id")),
+                     "limit": 200, "start_did": cursor, "get_split_device": True,
+                     "support_smart_home": True, "get_cariot_device": True,
+                     "get_third_device": True},
+                ) or {}
+                devices.extend(result.get("device_info") or [])
+                if not result.get("has_more"):
+                    break
+                nxt = str(result.get("max_did") or "")
+                if not nxt or nxt == cursor:
+                    break
+                cursor = nxt
+        return devices
+
+    def find_speaker(self) -> dict:
+        for dev in self.devices():
+            model = str(dev.get("model") or "").lower()
+            name = str(dev.get("name") or "")
+            if "speaker" in model or "音箱" in name:
+                return dev
+        return {}
+
     # ------------------------- 业务 ------------------------- #
     def speak(self, did: str, text: str) -> dict:
         return self.request(
