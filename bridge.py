@@ -252,34 +252,41 @@ fi
 
 
 def ensure_watchdog(cfg: dict) -> None:
-    """安装看门狗脚本；装了 Termux:API 就注册系统级 JobScheduler。"""
-    if cfg.get("watchdog_installed"):
-        return
+    """安装看门狗脚本；装了 Termux:API 就注册系统级 JobScheduler（可重复尝试）。"""
+    path = BASE_DIR / "watchdog.sh"
     try:
-        path = BASE_DIR / "watchdog.sh"
-        path.write_text(WATCHDOG_SH, encoding="utf-8")
-        os.chmod(path, 0o755)
-        log.info("已写入看门狗：%s", path)
+        need_write = (not path.exists()) or (path.read_text(encoding="utf-8") != WATCHDOG_SH)
+        if need_write:
+            path.write_text(WATCHDOG_SH, encoding="utf-8")
+            os.chmod(path, 0o755)
+            log.info("已写入看门狗：%s", path)
     except Exception as exc:  # noqa: BLE001
         log.warning("写看门狗失败：%s", exc)
         return
+
+    if cfg.get("watchdog_job_registered"):
+        log.info("系统级看门狗已注册（每 15 分钟检查）")
+        return
+
     import shutil as _shutil
     js = _shutil.which("termux-job-scheduler")
-    if js:
-        try:
-            subprocess.run([js, "-s", str(path), "--period-ms", "900000",
+    if not js:
+        log.info("未安装 Termux:API，暂用 run-loop + 开机自启；装好 Termux:API 后重启 bridge 即可自动注册")
+        return
+    try:
+        r = subprocess.run([js, "-s", str(path), "--period-ms", "900000",
                             "--persisted", "true"],
                            capture_output=True, timeout=20, check=False)
-            log.info("已注册系统级看门狗（每 15 分钟检查 bridge/晶御）")
-        except Exception as exc:  # noqa: BLE001
-            log.warning("注册系统看门狗失败：%s", exc)
-    else:
-        log.info("未安装 Termux:API，暂用 run-loop + 开机自启；装 Termux:API 后重启即可启用系统级自愈")
-    cfg["watchdog_installed"] = True
-    try:
-        save_config(cfg)
-    except Exception:
-        pass
+        out = (r.stdout or b"").decode("utf-8", "replace").strip()
+        err = (r.stderr or b"").decode("utf-8", "replace").strip()
+        log.info("已注册系统级看门狗（每 15 分钟检查）：%s %s", out, err)
+        cfg["watchdog_job_registered"] = True
+        try:
+            save_config(cfg)
+        except Exception:
+            pass
+    except Exception as exc:  # noqa: BLE001
+        log.warning("注册系统看门狗失败：%s", exc)
 
 
 def _new_account(username: str, password: str, otp_callback=None):
