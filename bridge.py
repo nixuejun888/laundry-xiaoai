@@ -412,6 +412,13 @@ def cloud_auth(cfg: dict):
             log.warning("xcloud 模块不可用：%s（自动下载也失败：%s）", exc, exc2)
             return None
     path = CONFIG_DIR / str(cfg.get("cloud_auth_file") or "xiaomi_cloud.json")
+    backup = path.with_suffix(path.suffix + ".bak")
+    if not path.exists() and backup.exists():
+        try:
+            path.write_bytes(backup.read_bytes())
+            log.info("米家云授权文件缺失，已从本地备份恢复")
+        except Exception:
+            pass
     if not path.exists():
         url = str(cfg.get("cloud_auth_url") or "").strip()
         if not url:
@@ -434,6 +441,12 @@ def cloud_auth(cfg: dict):
     if not auth.ready:
         log.warning("米家云授权文件不完整：%s", path)
         return None
+    try:
+        if not backup.exists() or backup.read_bytes() != path.read_bytes():
+            backup.write_bytes(path.read_bytes())
+            backup.chmod(0o600)
+    except Exception:
+        pass
     _CLOUD_AUTH_CACHE["auth"] = auth
     return auth
 
