@@ -162,6 +162,8 @@ DEFAULT_CONFIG = {
     },
 }
 
+VERSION = "1.0-20261101"
+
 log = logging.getLogger(APP_NAME)
 LOCK = threading.Lock()
 LAST_SPOKEN = {}  # category -> monotonic timestamp
