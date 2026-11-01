@@ -212,6 +212,9 @@ def load_config() -> dict:
         except Exception as exc:  # 配置损坏时用默认值，但别覆盖用户文件
             log.warning("配置文件解析失败(%s)，本次使用默认配置", exc)
             data = {}
+    if not isinstance(data, dict):
+        log.warning("配置文件不是 JSON 对象，本次使用默认配置")
+        data = {}
     cfg = deep_merge(DEFAULT_CONFIG, data)
     # 老配置里 listen_host 是 127.0.0.1：音箱无法拉取 /sounds，自动迁移为 0.0.0.0
     migrated = False
@@ -282,12 +285,15 @@ def ensure_watchdog(cfg: dict) -> None:
                            capture_output=True, timeout=20, check=False)
         out = (r.stdout or b"").decode("utf-8", "replace").strip()
         err = (r.stderr or b"").decode("utf-8", "replace").strip()
-        log.info("已注册系统级看门狗（每 15 分钟检查）：%s %s", out, err)
-        cfg["watchdog_job_registered"] = True
-        try:
-            save_config(cfg)
-        except Exception:
-            pass
+        if r.returncode == 0:
+            log.info("已注册系统级看门狗（每 15 分钟检查）：%s %s", out, err)
+            cfg["watchdog_job_registered"] = True
+            try:
+                save_config(cfg)
+            except Exception:
+                pass
+        else:
+            log.warning("注册系统看门狗失败（rc=%s）：%s %s", r.returncode, out, err)
     except Exception as exc:  # noqa: BLE001
         log.warning("注册系统看门狗失败：%s", exc)
 
@@ -848,127 +854,127 @@ async def _speak_inner(text: str, cfg: dict, dry_run: bool = False, category: st
             "error": "账号下没有找到小爱音箱（MiNA 设备为空且米家云不可用）。"
                      "请确认小米登录状态，或运行 python bridge.py --list 查看。",
         }
-        # 只在会话缺失时补登录，避免每次播报都登录触发小米风控
-        for _sid in ("micoapi", "xiaomiio"):
-            if not (account.token and _sid in account.token):
-                try:
-                    await account.login(_sid)
-                except Exception as exc:  # noqa: BLE001
-                    log.warning("补登录 %s 失败：%s", _sid, exc)
-        targets = pick_targets(devices, cfg.get("speaker") or "")
-        if not targets:
-            return {
-                "ok": False,
-                "error": f"没有匹配到 speaker={cfg.get('speaker')!r} 的音箱。"
-                         f"账号下设备：\n{_fmt_devices(devices)}",
-            }
-
-        try:
-            _first_did = str(targets[0].get("miotDID") or "")
-            if _first_did and str(cfg.get("speaker_miot_did") or "") != _first_did:
-                cfg["speaker_miot_did"] = _first_did
-                save_config(cfg)
-        except Exception:
-            pass
-        spoken, failed, warnings = [], [], []
-        channels = {}
-        miio = None
-        for d in targets:
-            did = d.get("deviceID")
-            name = d.get("name") or str(did)
-            channel, iid = pick_tts_channel(cfg, d)
-            channels[name] = channel
+    # 只在会话缺失时补登录，避免每次播报都登录触发小米风控
+    for _sid in ("micoapi", "xiaomiio"):
+        if not (account.token and _sid in account.token):
             try:
-                if cfg.get("volume") is not None:
-                    await service.player_set_volume(did, int(cfg["volume"]))
-                ok = False
-                # 1) 米家云扫码通道（api.mijia.tech）：最稳，和米家 App 同等权限
-                _ca = cloud_auth(cfg)
-                if _ca is not None:
-                    try:
-                        _res = await asyncio.to_thread(_ca.speak, str(d.get("miotDID") or ""), text)
-                        _code = int((_res or {}).get("code", -1))
-                        if _code == 0:
-                            log.info("米家云播报成功：%s", name)
-                            spoken.append(name)
-                            continue
-                        log.warning("米家云播报 code=%s，尝试其他通道", _code)
-                    except Exception as exc:  # noqa: BLE001
-                        log.warning("米家云播报失败：%s", exc)
-                # 2) 优先播预生成的固定语音（MiNA play_by_url，不经过 MIoT/TTS）
-                if cfg.get("prefer_sound") and category:
-                    url = sound_url(cfg, category)
-                    if url:
-                        try:
-                            try:
-                                # 0=single(单曲循环) 1=list(顺序) 2=random，必须用 1
-                                await service.player_set_loop(did, 1)
-                            except Exception:
-                                pass
-                            snd_ok = await service.play_by_url(did, url)
-                            log.info("播放语音文件 %s -> %s（%s）", category, snd_ok, url)
-                            if snd_ok:
-                                spoken.append(name)
-                                try:
-                                    name_f = (cfg.get("sound_files") or {}).get(category) or ""
-                                    fp = SOUNDS_DIR / name_f
-                                    if fp.exists():
-                                        # 48kbps 单声道：字节数*8/48000 ≈ 秒数
-                                        wait = fp.stat().st_size * 8 / 48000 + 0.4
-                                    else:
-                                        wait = float(cfg.get("sound_stop_sec") or 5)
-                                    await asyncio.sleep(wait)
-                                    # 音乐接口会循环，需要多 media 反复停止
-                                    for _try in range(4):
-                                        ok_stop = await _stop_speaker(service, did)
-                                        log.info("停止语音播放（第 %d 次）：%s", _try + 1, ok_stop)
-                                        await asyncio.sleep(1.2)
-                                    log.info("已停止语音播放（防止循环）")
-                                except Exception as exc:  # noqa: BLE001
-                                    log.warning("停止语音播放失败：%s", exc)
-                                continue
-                        except Exception as exc:  # noqa: BLE001
-                            log.warning("播放语音文件失败，改用 MIoT/TTS：%s", exc)
-                if channel == "miot":
-                    miot_did = str(d.get("miotDID") or "")
-                    try:
-                        from miservice import MiIOService
-                        miio = miio or MiIOService(account)
-                        code = await miio.miot_action(miot_did, iid, [text])
-                        if code != 0:
-                            log.warning("MIoT 返回 code=%s，刷新 xiaomiio 会话后重试", code)
-                            await account.login("xiaomiio")
-                            code = await miio.miot_action(miot_did, iid, [text])
-                        log.info("MIoT play-text %s siid=%s aiid=%s -> code=%s", name, iid[0], iid[1], code)
-                        ok = (code == 0)
-                    except Exception as exc:  # noqa: BLE001
-                        log.warning("MIoT 播报失败，刷新会话后重试：%s", exc)
-                        try:
-                            await account.login("xiaomiio")
-                            code = await miio.miot_action(miot_did, iid, [text])
-                            log.info("重试 MIoT play-text -> code=%s", code)
-                            ok = (code == 0)
-                        except Exception as exc2:  # noqa: BLE001
-                            log.warning("MIoT 重试仍失败，回退 MiNA：%s", exc2)
-                if not ok:
-                    ok = await service.text_to_speech(did, text)
-                    if ok:
-                        hw = str(d.get("hardware") or "").upper()
-                        if "OH2" in hw:
-                            warnings.append(f"{name}: MIoT 失败后回退 MiNA，OH2 型号通常无声")
-                            log.warning("MIoT 失败后回退 MiNA（%s），OH2 型号通常无声，实际可能没播报", name)
-                (spoken if ok else failed).append(name)
-            except Exception as exc:
-                log.exception("播报失败 %s: %s", name, exc)
-                failed.append(name)
+                await account.login(_sid)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("补登录 %s 失败：%s", _sid, exc)
+    targets = pick_targets(devices, cfg.get("speaker") or "")
+    if not targets:
+        return {
+            "ok": False,
+            "error": f"没有匹配到 speaker={cfg.get('speaker')!r} 的音箱。"
+                     f"账号下设备：\n{_fmt_devices(devices)}",
+        }
 
-        result = {"ok": bool(spoken), "spoken": spoken, "failed": failed, "channels": channels}
-        if warnings:
-            result["warnings"] = warnings
-            result["warning"] = "；".join(warnings)
-        if failed and not spoken:
-            result["error"] = "所有音箱播报失败，详见日志"
-        return result
+    try:
+        _first_did = str(targets[0].get("miotDID") or "")
+        if _first_did and str(cfg.get("speaker_miot_did") or "") != _first_did:
+            cfg["speaker_miot_did"] = _first_did
+            save_config(cfg)
+    except Exception:
+        pass
+    spoken, failed, warnings = [], [], []
+    channels = {}
+    miio = None
+    for d in targets:
+        did = d.get("deviceID")
+        name = d.get("name") or str(did)
+        channel, iid = pick_tts_channel(cfg, d)
+        channels[name] = channel
+        try:
+            if cfg.get("volume") is not None:
+                await service.player_set_volume(did, int(cfg["volume"]))
+            ok = False
+            # 1) 米家云扫码通道（api.mijia.tech）：最稳，和米家 App 同等权限
+            _ca = cloud_auth(cfg)
+            if _ca is not None:
+                try:
+                    _res = await asyncio.to_thread(_ca.speak, str(d.get("miotDID") or ""), text)
+                    _code = int((_res or {}).get("code", -1))
+                    if _code == 0:
+                        log.info("米家云播报成功：%s", name)
+                        spoken.append(name)
+                        continue
+                    log.warning("米家云播报 code=%s，尝试其他通道", _code)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("米家云播报失败：%s", exc)
+            # 2) 优先播预生成的固定语音（MiNA play_by_url，不经过 MIoT/TTS）
+            if cfg.get("prefer_sound") and category:
+                url = sound_url(cfg, category)
+                if url:
+                    try:
+                        try:
+                            # 0=single(单曲循环) 1=list(顺序) 2=random，必须用 1
+                            await service.player_set_loop(did, 1)
+                        except Exception:
+                            pass
+                        snd_ok = await service.play_by_url(did, url)
+                        log.info("播放语音文件 %s -> %s（%s）", category, snd_ok, url)
+                        if snd_ok:
+                            spoken.append(name)
+                            try:
+                                name_f = (cfg.get("sound_files") or {}).get(category) or ""
+                                fp = SOUNDS_DIR / name_f
+                                if fp.exists():
+                                    # 48kbps 单声道：字节数*8/48000 ≈ 秒数
+                                    wait = fp.stat().st_size * 8 / 48000 + 0.4
+                                else:
+                                    wait = float(cfg.get("sound_stop_sec") or 5)
+                                await asyncio.sleep(wait)
+                                # 音乐接口会循环，需要多 media 反复停止
+                                for _try in range(4):
+                                    ok_stop = await _stop_speaker(service, did)
+                                    log.info("停止语音播放（第 %d 次）：%s", _try + 1, ok_stop)
+                                    await asyncio.sleep(1.2)
+                                log.info("已停止语音播放（防止循环）")
+                            except Exception as exc:  # noqa: BLE001
+                                log.warning("停止语音播放失败：%s", exc)
+                            continue
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("播放语音文件失败，改用 MIoT/TTS：%s", exc)
+            if channel == "miot":
+                miot_did = str(d.get("miotDID") or "")
+                try:
+                    from miservice import MiIOService
+                    miio = miio or MiIOService(account)
+                    code = await miio.miot_action(miot_did, iid, [text])
+                    if code != 0:
+                        log.warning("MIoT 返回 code=%s，刷新 xiaomiio 会话后重试", code)
+                        await account.login("xiaomiio")
+                        code = await miio.miot_action(miot_did, iid, [text])
+                    log.info("MIoT play-text %s siid=%s aiid=%s -> code=%s", name, iid[0], iid[1], code)
+                    ok = (code == 0)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("MIoT 播报失败，刷新会话后重试：%s", exc)
+                    try:
+                        await account.login("xiaomiio")
+                        code = await miio.miot_action(miot_did, iid, [text])
+                        log.info("重试 MIoT play-text -> code=%s", code)
+                        ok = (code == 0)
+                    except Exception as exc2:  # noqa: BLE001
+                        log.warning("MIoT 重试仍失败，回退 MiNA：%s", exc2)
+            if not ok:
+                ok = await service.text_to_speech(did, text)
+                if ok:
+                    hw = str(d.get("hardware") or "").upper()
+                    if "OH2" in hw:
+                        warnings.append(f"{name}: MIoT 失败后回退 MiNA，OH2 型号通常无声")
+                        log.warning("MIoT 失败后回退 MiNA（%s），OH2 型号通常无声，实际可能没播报", name)
+            (spoken if ok else failed).append(name)
+        except Exception as exc:
+            log.exception("播报失败 %s: %s", name, exc)
+            failed.append(name)
+
+    result = {"ok": bool(spoken), "spoken": spoken, "failed": failed, "channels": channels}
+    if warnings:
+        result["warnings"] = warnings
+        result["warning"] = "；".join(warnings)
+    if failed and not spoken:
+        result["error"] = "所有音箱播报失败，详见日志"
+    return result
 
 
 async def speak_async(text: str, cfg: dict, dry_run: bool = False, category: str = "") -> dict:
@@ -1215,6 +1221,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
         if result.get("ok") and not bypass_cooldown:
             with LOCK:
                 LAST_SPOKEN[category] = time.monotonic()
+        elif not result.get("ok") and not bypass_cooldown:
+            # 播报失败：释放占位，允许后续重试（否则会被 cooldown 挡住）
+            with LOCK:
+                LAST_SPOKEN.pop(category, None)
         type(self).last_result = dict(result, ts=time.strftime("%Y-%m-%d %H:%M:%S"))
         if result.get("ok"):
             self._run_post_actions(category)
@@ -1336,13 +1346,14 @@ def run_server(cfg: dict, dry_run: bool, host: str, port: int):
     BridgeHandler.dry_run = dry_run
     _ensure_stable_device_id(cfg)
     _remember_device_id(cfg)
-    try:
-        ensure_watchdog(cfg)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("安装看门狗失败：%s", exc)
-    refresh_cloud_module(cfg)
-    if cfg.get("prefer_sound"):
-        ensure_sounds(cfg)
+    if not dry_run:
+        try:
+            ensure_watchdog(cfg)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("安装看门狗失败：%s", exc)
+        refresh_cloud_module(cfg)
+        if cfg.get("prefer_sound"):
+            ensure_sounds(cfg)
     httpd = ThreadingHTTPServer((host, port), BridgeHandler)
     if cfg.get("prefer_sound"):
         log.info("语音文件服务：http://%s:%s/sounds/（sound_base=%s）",
@@ -1383,6 +1394,7 @@ def main(argv=None) -> int:
     parser.add_argument("--classify", metavar="TEXT", help="只测试关键词分类，不发请求")
     parser.add_argument("--run-actions", metavar="CATEGORY",
                         help="只执行该类别配置的联动动作、不播报（测试晾衣架用，如 washer）")
+    parser.add_argument("--version", action="version", version=f"bridge {VERSION}")
     parser.add_argument("--dry-run", action="store_true", help="不连小米，只跑 HTTP 流程")
     parser.add_argument("--host", help="覆盖监听地址（默认取配置）")
     parser.add_argument("--port", type=int, help="覆盖监听端口（默认取配置）")

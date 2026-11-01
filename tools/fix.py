@@ -11,6 +11,7 @@
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -263,10 +264,15 @@ def main():
 
     # 5) 健康检查
     ok = False
+    health_port = 8765
+    try:
+        health_port = int(json.loads((CFG_DIR / "config.json").read_text(encoding="utf-8")).get("listen_port") or 8765)
+    except Exception:
+        pass
     for _ in range(10):
         time.sleep(1)
         try:
-            with urllib.request.urlopen("http://127.0.0.1:8765/health", timeout=3) as r:
+            with urllib.request.urlopen(f"http://127.0.0.1:{health_port}/health", timeout=3) as r:
                 print("✅ 服务已就绪：", r.read().decode())
                 ok = True
                 break

@@ -15,7 +15,6 @@ import gzip
 import hashlib
 import json
 import os
-import random
 import time
 import urllib.error
 import urllib.parse
@@ -273,10 +272,15 @@ class CloudAuth:
 
     # ------------------------- 业务 ------------------------- #
     def speak(self, did: str, text: str) -> dict:
-        return self.request(
+        result = self.request(
             "/miotspec/action",
             {"params": {"did": str(did), "siid": 5, "aiid": 3, "in": [text]}},
         )
+        if isinstance(result, list):
+            result = self._first(result)
+        if not isinstance(result, dict):
+            return {"code": -1, "raw": result}
+        return result
 
     @staticmethod
     def _first(items):
