@@ -972,7 +972,11 @@ async def _speak_inner(text: str, cfg: dict, dry_run: bool = False, category: st
 async def speak_async(text: str, cfg: dict, dry_run: bool = False, category: str = "") -> dict:
     """外层包装：统一捕获异常并给出提示。"""
     try:
-        return await _speak_inner(text, cfg, dry_run, category)
+        result = await _speak_inner(text, cfg, dry_run, category)
+        if not isinstance(result, dict):
+            log.warning("播报内部返回异常值：%r（按失败处理）", result)
+            return {"ok": False, "error": f"播报内部返回异常：{result!r}"}
+        return result
     except Exception as exc:  # noqa: BLE001
         msg = str(exc)
         hint = ""
@@ -1200,6 +1204,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
         # 串行化真正的 TTS 调用：两条播报命令重叠时，小爱往往只读到一半就被打断
         with SPEAK_EXEC_LOCK:
             result = asyncio.run(speak_async(text, self.cfg, self.dry_run, category))
+            if not isinstance(result, dict):
+                log.warning("播报返回空值（%r），重试一次", result)
+                result = asyncio.run(speak_async(text, self.cfg, self.dry_run, category))
+            if not isinstance(result, dict):
+                result = {"ok": False, "error": f"播报返回异常：{result!r}"}
         result.update({"category": category, "text": text})
         if result.get("ok") and not bypass_cooldown:
             with LOCK:
@@ -1341,7 +1350,7 @@ def run_server(cfg: dict, dry_run: bool, host: str, port: int):
         threading.Thread(target=token_guard_loop, args=(cfg,), daemon=True).start()
         threading.Thread(target=token_refresh_loop, args=(cfg,), daemon=True).start()
     PID_PATH.write_text(str(os.getpid()), encoding="utf-8")
-    log.info("服务已启动：http://%s:%s （dry_run=%s）", host, port, dry_run)
+    log.info("bridge 版本 %s｜服务已启动：http://%s:%s （dry_run=%s）", VERSION, host, port, dry_run)
     log.info("健康检查：http://%s:%s/health", host, port)
     try:
         httpd.serve_forever()
