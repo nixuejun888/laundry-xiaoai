@@ -1409,6 +1409,8 @@ def main(argv=None) -> int:
     if args.test or args.test_text:
         text = args.test_text if args.test_text else cfg["messages"].get(args.test)
         result = asyncio.run(speak_async(text, cfg, dry_run=False, category=(args.test or "")))
+        if not isinstance(result, dict):
+            result = {"ok": False, "error": f"播报返回异常：{result!r}（可能是旧版 bridge，请更新后重试）"}
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result.get("ok") else 1
 
