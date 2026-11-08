@@ -59,8 +59,19 @@
     "com.tencent.mm"
   ],
   "post_actions": {
-    "enabled": false,
-    "washer": [],
+    "enabled": true,
+    "washer": [
+      {
+        "type": "miot_airer_to",
+        "did": "REPLACE_WITH_AIRER_DID",
+        "position": 70,
+        "delay_sec": 3,
+        "timeout_sec": 120,
+        "poll_sec": 2,
+        "followup_text": "晾衣架已准备就绪，去晾衣服吧",
+        "followup_delay_sec": 0
+      }
+    ],
     "dryer": []
   }
 }

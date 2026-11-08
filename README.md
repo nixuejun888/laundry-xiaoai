@@ -325,6 +325,23 @@ python ~/laundry-xiaoai/tools/rack.py   # 交互式向导：选设备 → 读 MI
 
 > 隐私提醒：`xiaomi_cloud.json` 等同于账号授权，不要提交到公开仓库（已在 `.gitignore` 排除）。
 
+**晾衣架只降到自己想要的高度**
+
+`post_actions` 里用 `type: miot_airer_to` 可以按百分比下降（0=顶部，100=底部）：
+
+```json
+{
+  "type": "miot_airer_to",
+  "did": "你的晾衣机DID",
+  "position": 70,
+  "followup_text": "晾衣架已准备就绪，去晾衣服吧"
+}
+```
+
+也可以直接跑 `python ~/laundry-xiaoai/tools/set_rack_height.py 70` 一键改写配置
+（或一键中心 → 16）。动作会先写 `target-position` 再按方向移动，到目标位置自动停；
+已在目标高度时不会重复移动，超时会自动暂停。
+
 ## 9.6 token 守护（自动重登，避免“突然不播报”）
 
 小米服务令牌（`mi.token`）过期后，`miservice` 在请求 401 时会**主动删除 token 文件**并尝试用密码重登。如果 `config.json` 里没有保存密码，重登会失败，token 就永久丢失，之后所有播报都失效。

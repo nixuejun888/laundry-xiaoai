@@ -46,6 +46,7 @@ FILES = [
     ("tools/miot_check.py", "tools/miot_check.py"),
     ("tools/dlna_check.py", "tools/dlna_check.py"),
     ("tools/fix_login.py", "tools/fix_login.py"),
+    ("tools/set_rack_height.py", "tools/set_rack_height.py"),
     ("sounds/washer.mp3", "sounds/washer.mp3"),
     ("sounds/dryer.mp3", "sounds/dryer.mp3"),
     ("sounds/linger.mp3", "sounds/linger.mp3"),

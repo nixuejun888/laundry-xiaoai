@@ -50,6 +50,7 @@ FILES = [
     ("tools/oneclick.py", "tools/oneclick.py"),
     ("tools/fix_token.py", "tools/fix_token.py"),
     ("tools/miot_check.py", "tools/miot_check.py"),
+    ("tools/set_rack_height.py", "tools/set_rack_height.py"),
     ("tools/dlna_check.py", "tools/dlna_check.py"),
     ("tools/rack.py", "tools/rack.py"),
 ]
@@ -449,6 +450,15 @@ def action_dlna_check():
     run_script(f, timeout=300)
 
 
+def action_rack_height():
+    banner("设置晾衣架自动下降高度")
+    f = find("set_rack_height.py")
+    if not f:
+        print("❌ 找不到 set_rack_height.py，先选 9 更新本地工具")
+        return
+    run_script(f, timeout=300)
+
+
 def action_update():
     banner("更新本地工具")
     n = update_tools()
@@ -492,9 +502,10 @@ def main():
         print(" 13) 小米 token 一键修复")
         print(" 14) MIoT 通道诊断（没声音时用）")
         print(" 15) 检测本地 DLNA 播放（更稳方案的可行性）")
+        print(" 16) 设置晾衣架下降高度（默认 70%）")
         print("  0) 退出")
         try:
-            choice = input("输入 1-15 或 0：").strip()
+            choice = input("输入 1-16 或 0：").strip()
         except (EOFError, KeyboardInterrupt):
             print("\n退出。")
             return 0
@@ -529,11 +540,13 @@ def main():
                 action_miot_check()
             elif choice == "15":
                 action_dlna_check()
+            elif choice == "16":
+                action_rack_height()
             elif choice == "0":
                 print("再见。")
                 return 0
             else:
-                print("请输入 1-15 或 0。")
+                print("请输入 1-16 或 0。")
         except KeyboardInterrupt:
             print("\n已取消当前操作。")
         except Exception as exc:  # noqa: BLE001

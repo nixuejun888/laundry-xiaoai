@@ -102,6 +102,8 @@ DEFAULT_CONFIG = {
     "cloud_auth_file": "xiaomi_cloud.json",
     "cloud_auth_url": "http://192.168.5.15:8788/xiaomi_cloud.json",
     "speaker_miot_did": "",
+    # 晾衣架联动下降到的高度百分比（0=顶部，100=底部）；用于 miot_airer_to 动作
+    "rack_target_position": 70,
     "watchdog_installed": False,
     # 语音文件访问前缀。留空=本机局域网（http://手机IP:8765/sounds）；
     # 也可以填公网前缀（如 https://ghfast.top/https://raw.githubusercontent.com/.../sounds）
@@ -637,6 +639,89 @@ async def _miot_set_prop_async(cfg: dict, did: str, siid: int, piid: int, value)
 async def _miot_action_async(cfg: dict, did: str, siid: int, aiid: int, args):
     service = await _miio_service_async(cfg)
     return _code_of(await service.miot_action(str(did), (siid, aiid), list(args or [])))
+
+
+async def _airer_move_to_async(cfg: dict, did: str, position: int,
+                                timeout: float = 120.0, poll: float = 2.0) -> int:
+    """晾衣机移动到指定百分比高度（0=顶部，100=底部）。
+
+    安全策略：
+    - 已经接近目标 → 不动，直接返回成功
+    - 写 target-position 后按方向发上升/下降
+    - 中途越界（超过目标 12%）立即暂停
+    - 超时也暂停，避免一直跑到限位
+    """
+    pos = max(0, min(100, int(position)))
+    did = str(did)
+
+    async def read(siid, piid):
+        try:
+            return await _miot_get_prop_async(cfg, did, siid, piid)
+        except Exception:
+            return None
+
+    cur = await read(6, 6)
+    st = await read(2, 2)
+    try:
+        cur_i = int(cur) if cur is not None else None
+    except (TypeError, ValueError):
+        cur_i = None
+    if cur_i is not None and abs(cur_i - pos) <= 3 and st in (0, 3, 4):
+        log.info("晾衣架已在 %s%%（current=%s），无需移动", pos, cur_i)
+        return 0
+
+    code = await _miot_set_prop_async(cfg, did, 2, 12, pos)   # target-position
+    if code != 0:
+        log.warning("写 target-position=%s 失败：code=%s", pos, code)
+        return code
+    await asyncio.sleep(0.5)
+
+    # 位置数字越大越靠下：current < pos 需要下降，反之上升
+    if cur_i is None or cur_i < pos:
+        direction = 2
+    else:
+        direction = 1
+    code = await _miot_set_prop_async(cfg, did, 2, 5, direction)
+    if code != 0:
+        log.warning("发移动指令(%s)失败：code=%s", direction, code)
+        return code
+
+    deadline = time.time() + timeout
+    moving_seen = False
+    stable = 0
+    while time.time() < deadline:
+        await asyncio.sleep(poll)
+        cur = await read(6, 6)
+        st = await read(2, 2)
+        try:
+            cur_i = int(cur) if cur is not None else None
+        except (TypeError, ValueError):
+            cur_i = None
+        if st in (1, 2):
+            moving_seen = True
+            stable = 0
+        else:
+            if cur_i is not None and abs(cur_i - pos) <= 5:
+                stable += 1
+            else:
+                stable = 0
+        overshoot = (
+            cur_i is not None and moving_seen
+            and ((direction == 2 and cur_i > pos + 12)
+                 or (direction == 1 and cur_i < pos - 12))
+        )
+        if overshoot:
+            log.warning("晾衣架已越过目标（current=%s, target=%s, 方向=%s），立即暂停",
+                        cur_i, pos, direction)
+            await _miot_set_prop_async(cfg, did, 2, 5, 0)
+            return -1
+        if st in (0, 3, 4) and cur_i is not None and abs(cur_i - pos) <= 5:
+            if moving_seen or stable >= 2:
+                log.info("晾衣架已到达 %s%% 并停止（current=%s, status=%s）", pos, cur_i, st)
+                return 0
+    log.warning("等待晾衣架到达 %s%% 超时，发送暂停", pos)
+    await _miot_set_prop_async(cfg, did, 2, 5, 0)
+    return -1
 
 
 async def _miot_get_prop_async(cfg: dict, did: str, siid: int, piid: int):
@@ -1314,6 +1399,15 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 log.info("联动动作 miot_action did=%s siid=%s aiid=%s args=%s -> code=%s",
                          action.get("did"), action.get("siid"), action.get("aiid"),
                          action.get("args"), code)
+            elif typ == "miot_airer_to":
+                pos = int(action.get("position") or self.cfg.get("rack_target_position") or 70)
+                code = asyncio.run(_airer_move_to_async(
+                    self.cfg, str(action.get("did") or ""), pos,
+                    float(action.get("timeout_sec") or 120),
+                    float(action.get("poll_sec") or 2)))
+                ok = code == 0
+                log.info("联动动作 miot_airer_to did=%s position=%s%% -> code=%s",
+                         action.get("did"), pos, code)
             elif typ == "http":
                 req = urllib.request.Request(action["url"], method=action.get("method", "GET"))
                 with urllib.request.urlopen(req, timeout=15) as resp:
